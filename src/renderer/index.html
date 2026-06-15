@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self' data: blob:; img-src 'self' data: blob:;"
+    />
+    <title>Resume Manager</title>
+    <script src="theme-init.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-view="list">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>
+          <h1>Resume Manager</h1>
+          <p id="subtitle" class="subtitle">Choose a profile to continue</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button
+          id="theme-toggle"
+          class="btn btn-ghost btn-icon theme-toggle"
+          type="button"
+          aria-label="Toggle theme"
+          title="Toggle light / dark theme"
+        >
+          <span class="icon" data-show="light" aria-hidden="true">☀</span>
+          <span class="icon" data-show="dark" aria-hidden="true">☾</span>
+        </button>
+        <button id="back-btn" class="btn btn-ghost only-workspace" type="button">
+          ← Profiles
+        </button>
+        <button
+          id="backup-btn"
+          class="btn btn-ghost only-list"
+          type="button"
+          title="Save profiles, resumes, prompts, and styles to a backup file"
+        >
+          Backup
+        </button>
+        <button
+          id="restore-btn"
+          class="btn btn-ghost only-list"
+          type="button"
+          title="Restore from a backup file (overwrites current data)"
+        >
+          Restore
+        </button>
+        <button id="new-profile-btn" class="btn btn-primary only-list">
+          <span class="plus">+</span> New profile
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- LIST VIEW -->
+      <section id="list-view" class="view">
+        <section id="grid" class="grid" aria-label="Profiles">
+          <!-- Profile tiles render here -->
+        </section>
+
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-illustration">+</div>
+          <h2>No profiles yet</h2>
+          <p>Create your first profile to start managing resumes.</p>
+          <button id="empty-create-btn" class="btn btn-primary">
+            Create profile
+          </button>
+        </div>
+      </section>
+
+      <!-- TEMPLATE PICKER VIEW -->
+      <section id="picker-view" class="view">
+        <header class="picker-header">
+          <div>
+            <h2 id="picker-profile-name">Profile</h2>
+            <p class="muted small">Pick a layout, then continue to the editor.</p>
+          </div>
+          <div class="picker-actions">
+            <button id="picker-back-btn" class="btn btn-ghost" type="button">
+              ← Profiles
+            </button>
+            <button id="picker-next" class="btn btn-primary" type="button" disabled>
+              Next →
+            </button>
+          </div>
+        </header>
+        <div id="template-grid" class="template-grid" aria-label="Resume templates"></div>
+      </section>
+
+      <!-- WORKSPACE VIEW -->
+      <section id="workspace-view" class="view">
+        <header class="workspace-header">
+          <div class="workspace-profile">
+            <div id="ws-avatar" class="avatar avatar-sm">?</div>
+            <div class="workspace-profile-text">
+              <div class="ws-name-row">
+                <h2 id="ws-name">Profile</h2>
+                <span id="ws-template" class="ws-chip">
+                  <span class="ws-chip-prefix">Template</span>
+                  <span id="ws-template-label">Modern</span>
+                </span>
+                <span id="ws-company" class="ws-chip hidden">
+                  <span class="ws-chip-prefix">Target</span>
+                  <span id="ws-company-label"></span>
+                </span>
+              </div>
+              <p id="ws-meta" class="muted small"></p>
+            </div>
+          </div>
+
+          <div class="workspace-controls">
+            <button id="change-template-btn" class="btn btn-ghost" type="button">
+              Change template
+            </button>
+            <button id="manage-process-btn" class="btn btn-ghost" type="button">
+              Manage process
+            </button>
+            <button id="reset-resume-btn" class="btn btn-ghost" type="button">
+              Reset JSON
+            </button>
+            <button id="export-pdf-btn" class="btn btn-primary" type="button">
+              Export PDF
+            </button>
+          </div>
+        </header>
+
+        <div id="customize-section" class="customize-section">
+          <button
+            id="customize-toggle"
+            class="customize-toggle"
+            type="button"
+            aria-expanded="true"
+            aria-controls="customize-bar"
+            title="Show / hide customization controls"
+          >
+            <svg
+              class="customize-toggle-chevron"
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              aria-hidden="true"
+            >
+              <path fill="currentColor" d="M7 10l5 5 5-5z" />
+            </svg>
+            <span>Customize</span>
+          </button>
+          <div
+            id="customize-bar"
+            class="customize-bar"
+            role="toolbar"
+            aria-label="Resume customization"
+          >
+            <!-- Controls are injected by workspace.js based on the active template -->
+          </div>
+        </div>
+
+        <div class="workspace-body">
+          <div class="preview-pane">
+            <div class="preview-toolbar">
+              <span class="field-label">Preview</span>
+            </div>
+            <div class="preview-frame-wrap">
+              <iframe
+                id="preview-frame"
+                title="Resume preview"
+              ></iframe>
+              <div id="preview-spinner" class="preview-spinner" aria-hidden="true"></div>
+              <p id="preview-error" class="preview-error hidden"></p>
+            </div>
+          </div>
+
+          <div class="right-stack">
+            <div class="editor-pane" data-pane="prompt">
+              <div class="editor-toolbar">
+                <span class="field-label">Prompt</span>
+                <div class="editor-toolbar-right">
+                  <span id="prompt-status" class="muted small"></span>
+                  <button
+                    id="generate-prompt-btn"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    title="Generate a prompt from this profile (overwrites the current prompt)"
+                  >
+                    Generate from profile
+                  </button>
+                  <button
+                    id="copy-prompt-btn"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    title="Copy prompt to clipboard"
+                    aria-label="Copy prompt to clipboard"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    data-pane-toggle="prompt"
+                    title="Hide prompt"
+                    aria-label="Hide prompt"
+                    aria-expanded="true"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path fill="currentColor" d="M7 10l5 5 5-5z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                id="resume-prompt"
+                class="prose-input"
+                placeholder="Paste a prompt here. It is plain text — useful for generating the resume JSON with an LLM. It is auto-saved per profile."
+                spellcheck="true"
+              ></textarea>
+            </div>
+
+            <div class="editor-pane" data-pane="jd">
+              <div class="editor-toolbar">
+                <span class="field-label">Job description</span>
+                <div class="editor-toolbar-right">
+                  <span id="jd-status" class="muted small"></span>
+                  <button
+                    id="paste-jd-btn"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    title="Replace the job description with clipboard contents"
+                    aria-label="Paste job description from clipboard"
+                  >
+                    Paste
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    data-pane-toggle="jd"
+                    title="Hide job description"
+                    aria-label="Hide job description"
+                    aria-expanded="true"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path fill="currentColor" d="M7 10l5 5 5-5z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                id="resume-jd"
+                class="prose-input"
+                placeholder="Paste the job description here. Saved per profile and exported as JD.txt next to the PDF."
+                spellcheck="true"
+              ></textarea>
+            </div>
+
+            <div class="editor-pane" data-pane="json">
+              <div class="editor-toolbar">
+                <span class="field-label">Resume data (JSON)</span>
+                <div class="editor-toolbar-right">
+                  <span id="json-status" class="muted small"></span>
+                  <button
+                    id="paste-json-btn"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    title="Replace the JSON with clipboard contents, then export the PDF and JD"
+                    aria-label="Paste JSON from clipboard and export"
+                  >
+                    Paste &amp; export
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    data-pane-toggle="json"
+                    title="Hide resume JSON"
+                    aria-label="Hide resume JSON"
+                    aria-expanded="true"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path fill="currentColor" d="M7 10l5 5 5-5z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                id="resume-json"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+              ></textarea>
+              <p id="json-error" class="json-error hidden"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Add / Edit profile modal -->
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-close></div>
+      <div class="modal-card">
+        <h2 id="modal-title">New profile</h2>
+
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">First name</span>
+              <input
+                id="first-name"
+                type="text"
+                maxlength="40"
+                placeholder="Alice"
+                autocomplete="off"
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">Last name</span>
+              <input
+                id="last-name"
+                type="text"
+                maxlength="40"
+                placeholder="Doe"
+                autocomplete="off"
+              />
+            </label>
+
+            <label class="field">
+              <span class="field-label">Date of birth</span>
+              <input id="dob" type="date" />
+            </label>
+            <label class="field">
+              <span class="field-label">Location</span>
+              <input
+                id="location"
+                type="text"
+                maxlength="120"
+                placeholder="City, State"
+                autocomplete="off"
+              />
+            </label>
+
+            <label class="field">
+              <span class="field-label">Phone</span>
+              <input
+                id="phone"
+                type="tel"
+                maxlength="32"
+                placeholder="+1 (555) 123-4567"
+                autocomplete="off"
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">Email</span>
+              <input
+                id="email"
+                type="email"
+                maxlength="120"
+                placeholder="you@gmail.com"
+                autocomplete="off"
+              />
+            </label>
+
+            <label class="field full">
+              <span class="field-label">SSN</span>
+              <input
+                id="ssn"
+                type="text"
+                maxlength="11"
+                placeholder="XXX-XX-XXXX"
+                inputmode="numeric"
+                autocomplete="off"
+              />
+            </label>
+
+            <label class="field full">
+              <span class="field-label">Driver's license #</span>
+              <input
+                id="dl"
+                type="text"
+                maxlength="40"
+                autocomplete="off"
+              />
+            </label>
+
+            <label class="field">
+              <span class="field-label">DL issued date</span>
+              <input id="dl-issued" type="date" />
+            </label>
+            <label class="field">
+              <span class="field-label">DL expire date</span>
+              <input id="dl-expire" type="date" />
+            </label>
+
+            <div class="field full field-with-switch">
+              <div class="field-row">
+                <label for="linkedin" class="field-label">LinkedIn</label>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="linkedin-visible" />
+                  <span class="toggle-track"></span>
+                  <span class="toggle-label">Show on resume</span>
+                </label>
+              </div>
+              <input
+                id="linkedin"
+                type="url"
+                placeholder="https://linkedin.com/in/..."
+                autocomplete="off"
+              />
+            </div>
+
+            <div class="field full field-with-switch">
+              <div class="field-row">
+                <label for="github" class="field-label">GitHub</label>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="github-visible" />
+                  <span class="toggle-track"></span>
+                  <span class="toggle-label">Show on resume</span>
+                </label>
+              </div>
+              <input
+                id="github"
+                type="url"
+                placeholder="https://github.com/..."
+                autocomplete="off"
+              />
+            </div>
+
+            <label class="field full">
+              <span class="field-label">Save folder for exported PDFs</span>
+              <div class="folder-row">
+                <input
+                  id="save-folder"
+                  type="text"
+                  readonly
+                  placeholder="Click Browse to choose a folder…"
+                  autocomplete="off"
+                />
+                <button
+                  type="button"
+                  id="save-folder-pick"
+                  class="btn btn-ghost btn-sm"
+                >
+                  Browse…
+                </button>
+                <button
+                  type="button"
+                  id="save-folder-clear"
+                  class="btn btn-ghost btn-sm folder-clear"
+                  title="Clear save folder"
+                  aria-label="Clear save folder"
+                >
+                  ×
+                </button>
+              </div>
+            </label>
+          </div>
+
+          <div class="preview-row">
+            <span class="field-label">Preview</span>
+            <div class="preview">
+              <div id="preview-avatar" class="avatar avatar-lg">A</div>
+              <button id="reroll-color" type="button" class="btn btn-ghost">
+                Shuffle color
+              </button>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="form-section-header">
+              <h3>Work History</h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="role-based-work" />
+                <span class="toggle-track"></span>
+                <span class="toggle-label">Role-based</span>
+              </label>
+              <label
+                class="toggle-switch"
+                title="Don't enter the latest (most recent) company's name; the LLM picks it from an industry list based on the job description"
+              >
+                <input type="checkbox" id="last-company-tailor" />
+                <span class="toggle-track"></span>
+                <span class="toggle-label">Last company tailor</span>
+              </label>
+            </div>
+            <label class="field full">
+              <span class="field-label">Title</span>
+              <input
+                id="profile-title"
+                type="text"
+                maxlength="120"
+                placeholder="e.g. Senior DevOps Engineer"
+                autocomplete="off"
+              />
+            </label>
+            <div id="work-history-list" class="entry-list"></div>
+            <button
+              type="button"
+              id="add-work"
+              class="btn btn-ghost btn-sm add-entry-btn"
+            >
+              + Add work history
+            </button>
+          </div>
+
+          <div class="form-section">
+            <div class="form-section-header">
+              <h3>Education</h3>
+            </div>
+            <div id="education-list" class="entry-list"></div>
+            <button
+              type="button"
+              id="add-education"
+              class="btn btn-ghost btn-sm add-entry-btn"
+            >
+              + Add education
+            </button>
+          </div>
+
+          <div class="form-section">
+            <div class="form-section-header">
+              <h3>Certifications</h3>
+            </div>
+            <div id="certifications-list" class="entry-list"></div>
+            <button
+              type="button"
+              id="add-certification"
+              class="btn btn-ghost btn-sm add-entry-btn"
+            >
+              + Add certification
+            </button>
+          </div>
+
+          <p class="muted small">Stored locally on this device only.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button id="save-profile" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirm delete modal -->
+    <div id="confirm" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-confirm-close></div>
+      <div class="modal-card">
+        <h2>Delete profile?</h2>
+        <p id="confirm-text" class="muted">
+          This action cannot be undone.
+        </p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-confirm-close>Cancel</button>
+          <button id="confirm-delete" class="btn btn-danger">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Restore confirmation modal -->
+    <div
+      id="restore-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-restore-close></div>
+      <div class="modal-card">
+        <h2>Restore from backup?</h2>
+        <p id="restore-summary" class="muted small"></p>
+        <p class="muted">
+          This will <strong>replace</strong> all current profiles, resumes,
+          prompts, processes, and style customizations with those from the
+          backup file. Exported PDFs and your save folder are not affected.
+        </p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-restore-close type="button">
+            Cancel
+          </button>
+          <button id="restore-confirm" class="btn btn-danger" type="button">
+            Restore
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manage process modal -->
+    <div id="process-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-process-close></div>
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header-row">
+          <h2>Application processes</h2>
+          <button class="btn btn-ghost btn-sm" data-process-close type="button">
+            Close
+          </button>
+        </div>
+        <div class="process-toolbar">
+          <input
+            id="process-search-company"
+            type="search"
+            placeholder="Search company…"
+            autocomplete="off"
+          />
+          <input
+            id="process-search-date"
+            type="search"
+            placeholder="Search date (e.g. 06/2026)…"
+            autocomplete="off"
+          />
+          <label class="process-status-filter">
+            <span class="field-label inline">Status</span>
+            <select id="process-status-filter">
+              <option value="">All</option>
+              <option value="Pending">Pending</option>
+              <option value="Intro">Intro</option>
+              <option value="HR">HR</option>
+              <option value="Tech">Tech</option>
+              <option value="Panel">Panel</option>
+              <option value="Final">Final</option>
+            </select>
+          </label>
+          <span class="process-toolbar-spacer"></span>
+          <button
+            id="process-refresh"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            title="Re-scan the save folder and reconcile the list with what's on disk"
+          >
+            Refresh
+          </button>
+        </div>
+        <div class="process-table-wrap">
+          <p id="process-empty" class="muted small process-empty"></p>
+          <table class="process-table">
+            <thead>
+              <tr>
+                <th class="col-no">No</th>
+                <th class="col-company">Company Name</th>
+                <th class="col-date sortable" data-sort="date">
+                  Date <span class="sort-arrow"></span>
+                </th>
+                <th class="col-jd">JD</th>
+                <th class="col-resume">Resume</th>
+                <th class="col-status">Status</th>
+                <th class="col-step sortable" data-sort="step">
+                  Step <span class="sort-arrow"></span>
+                </th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="process-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rename process modal -->
+    <div
+      id="process-rename-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-rename-close></div>
+      <div class="modal-card">
+        <h2>Edit company name</h2>
+        <p class="muted small">
+          The folder on disk and the saved status / step will be renamed to
+          match.
+        </p>
+        <label class="field full">
+          <span class="field-label">Company</span>
+          <input
+            id="process-rename-input"
+            type="text"
+            maxlength="120"
+            autocomplete="off"
+          />
+        </label>
+        <p
+          id="process-rename-error"
+          class="json-error hidden"
+          role="alert"
+        ></p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-rename-close type="button">
+            Cancel
+          </button>
+          <button id="process-rename-confirm" class="btn btn-primary" type="button">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete process confirm modal -->
+    <div
+      id="process-delete-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-delete-close></div>
+      <div class="modal-card">
+        <h2>Delete this application?</h2>
+        <p id="process-delete-text" class="muted">
+          The folder and its files will be permanently removed. This action
+          cannot be undone.
+        </p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-delete-close type="button">
+            Cancel
+          </button>
+          <button id="process-delete-confirm" class="btn btn-danger" type="button">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- JD viewer modal -->
+    <div id="jd-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-jd-close></div>
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header-row">
+          <h2 id="jd-modal-title">Job description</h2>
+          <button class="btn btn-ghost btn-sm" data-jd-close type="button">
+            Close
+          </button>
+        </div>
+        <pre id="jd-content" class="jd-content"></pre>
+      </div>
+    </div>
+
+    <!-- Resume viewer modal -->
+    <div id="resume-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-resume-close></div>
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header-row">
+          <h2 id="resume-modal-title">Resume</h2>
+          <button class="btn btn-ghost btn-sm" data-resume-close type="button">
+            Close
+          </button>
+        </div>
+        <div class="resume-frame-wrap">
+          <iframe id="resume-frame" class="resume-frame" title="Resume PDF"></iframe>
+          <p id="resume-frame-error" class="preview-error hidden"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Profile detail modal (opened by clicking the workspace avatar) -->
+    <div
+      id="profile-detail-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="detail-name"
+    >
+      <div class="modal-backdrop" data-detail-close></div>
+      <div class="modal-card modal-card-wide profile-detail-card">
+        <div class="modal-header-row">
+          <div class="profile-detail-head">
+            <div id="detail-avatar" class="avatar avatar-lg">?</div>
+            <div>
+              <h2 id="detail-name">Profile</h2>
+              <p id="detail-subtitle" class="muted small"></p>
+            </div>
+          </div>
+          <button
+            class="btn btn-ghost btn-sm"
+            data-detail-close
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+        <div id="detail-body" class="profile-detail-body"></div>
+      </div>
+    </div>
+
+    <!-- Company name prompt (shown when JSON has no `company`) -->
+    <div id="company-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" data-company-close></div>
+      <div class="modal-card">
+        <h2>Company name needed</h2>
+        <p class="muted">
+          The resume JSON has no <code>company</code> field. Enter a company
+          name — it will be used as the folder name for the exported PDF.
+        </p>
+        <label class="field full">
+          <span class="field-label">Company</span>
+          <input
+            id="company-input"
+            type="text"
+            maxlength="120"
+            placeholder="Acme Inc."
+            autocomplete="off"
+          />
+        </label>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-company-close>Cancel</button>
+          <button id="company-confirm" class="btn btn-primary">
+            Save PDF
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <script src="templates.js"></script>
+    <script src="workspace.js"></script>
+    <script src="process.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

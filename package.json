@@ -1,0 +1,61 @@
+{
+  "name": "resume-manage",
+  "productName": "Resume Manager",
+  "version": "0.1.0",
+  "description": "Electron-based resume manager with multi-profile support",
+  "main": "src/main/main.js",
+  "author": "Resume Manager",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "keywords": [
+    "electron",
+    "resume",
+    "profile-manager"
+  ],
+  "devDependencies": {
+    "electron": "^42.3.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.resumemanage.app",
+    "productName": "Resume Manager",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.{md,log,map,test.js}",
+      "!**/{.git,.github,test,tests,docs,examples}/**",
+      "!**/{.DS_Store,Thumbs.db,.gitignore,.gitattributes,.editorconfig}"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Resume Manager",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Resume-Manager-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "Resume-Manager-${version}-Portable.${ext}"
+    }
+  }
+}
