@@ -1068,8 +1068,7 @@
         `${(pendingRestorePayload.profiles || []).length} profile(s), ` +
         `${Object.keys(pendingRestorePayload.resumes || {}).length} resume(s), ` +
         `${Object.keys(pendingRestorePayload.prompts || {}).length} prompt(s), ` +
-        `${Object.keys(pendingRestorePayload.jds || {}).length} JD(s), ` +
-        `${Object.keys(pendingRestorePayload.processes || {}).length} process record(s)`;
+        `${Object.keys(pendingRestorePayload.jds || {}).length} JD(s)`;
       if (restoreSummary) {
         restoreSummary.textContent =
           `Backup created ${created} · ${counts}`;
@@ -1119,8 +1118,7 @@
         `Restored ${c.profiles || 0} profile(s), ` +
         `${c.resumes || 0} resume(s), ` +
         `${c.prompts || 0} prompt(s), ` +
-        `${c.jds || 0} JD(s), ` +
-        `${c.processes || 0} process record(s)` +
+        `${c.jds || 0} JD(s)` +
         (styleCount ? `, ${styleCount} style(s)` : '');
       await loadProfiles();
       handleRoute();

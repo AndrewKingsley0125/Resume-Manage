@@ -569,8 +569,9 @@
         <p id="restore-summary" class="muted small"></p>
         <p class="muted">
           This will <strong>replace</strong> all current profiles, resumes,
-          prompts, processes, and style customizations with those from the
-          backup file. Exported PDFs and your save folder are not affected.
+          prompts, and style customizations with those from the backup file.
+          Exported PDFs in each profile's save folder are not affected; Manage
+          reads applications from those folders.
         </p>
         <div class="modal-actions">
           <button class="btn btn-ghost" data-restore-close type="button">
@@ -606,18 +607,22 @@
             placeholder="Search date (e.g. 06/2026)…"
             autocomplete="off"
           />
-          <label class="process-status-filter">
-            <span class="field-label inline">Status</span>
-            <select id="process-status-filter">
-              <option value="">All</option>
-              <option value="Pending">Pending</option>
-              <option value="Intro">Intro</option>
-              <option value="HR">HR</option>
-              <option value="Tech">Tech</option>
-              <option value="Panel">Panel</option>
-              <option value="Final">Final</option>
-            </select>
-          </label>
+          <button
+            id="process-export-zip"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            title="Export applications for a selected date to a ZIP file"
+          >
+            Export ZIP
+          </button>
+          <button
+            id="process-import-zip"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            title="Import applications from a ZIP file (skips duplicate companies)"
+          >
+            Import ZIP
+          </button>
           <span class="process-toolbar-spacer"></span>
           <button
             id="process-refresh"
@@ -640,15 +645,90 @@
                 </th>
                 <th class="col-jd">JD</th>
                 <th class="col-resume">Resume</th>
-                <th class="col-status">Status</th>
-                <th class="col-step sortable" data-sort="step">
-                  Step <span class="sort-arrow"></span>
-                </th>
                 <th class="col-actions">Actions</th>
               </tr>
             </thead>
             <tbody id="process-tbody"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export process modal -->
+    <div
+      id="process-export-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-export-close></div>
+      <div class="modal-card">
+        <h2>Export applications</h2>
+        <p class="muted small">
+          Choose a date to export company folders created on that day.
+        </p>
+        <label class="field full">
+          <span class="field-label">Date</span>
+          <input id="process-export-date" type="date" />
+        </label>
+        <p id="process-export-summary" class="process-export-summary muted small"></p>
+        <ul id="process-export-list" class="process-export-list"></ul>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-export-close type="button">
+            Cancel
+          </button>
+          <button id="process-export-confirm" class="btn btn-primary" type="button">
+            Export
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import process modal -->
+    <div
+      id="process-import-modal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-import-close></div>
+      <div class="modal-card">
+        <h2>Import applications</h2>
+        <p class="muted small">
+          Choose a ZIP named <code>firstname-lastname-YYYY-MM-DD.zip</code>. Companies
+          are compared with your save folder before importing.
+        </p>
+        <div class="process-import-pick-row">
+          <button id="process-import-pick" class="btn btn-ghost btn-sm" type="button">
+            Choose ZIP file
+          </button>
+          <span id="process-import-file" class="muted small process-import-file">
+            No file selected
+          </span>
+        </div>
+        <p id="process-import-summary" class="process-import-summary muted small"></p>
+        <div class="process-import-legend hidden" id="process-import-legend">
+          <span class="import-legend-item import-new">New — will import</span>
+          <span class="import-legend-item import-duplicate">Duplicate — will skip</span>
+        </div>
+        <div class="process-import-table-wrap hidden" id="process-import-table-wrap">
+          <table class="process-import-table">
+            <thead>
+              <tr>
+                <th class="col-import-company">Company</th>
+                <th class="col-import-status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="process-import-tbody"></tbody>
+          </table>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-import-close type="button">
+            Cancel
+          </button>
+          <button id="process-import-confirm" class="btn btn-primary" type="button" disabled>
+            Import
+          </button>
         </div>
       </div>
     </div>
@@ -664,8 +744,7 @@
       <div class="modal-card">
         <h2>Edit company name</h2>
         <p class="muted small">
-          The folder on disk and the saved status / step will be renamed to
-          match.
+          The company folder on disk will be renamed to match.
         </p>
         <label class="field full">
           <span class="field-label">Company</span>

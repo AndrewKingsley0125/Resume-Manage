@@ -28,17 +28,26 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('process:list', profileId, saveFolder),
   syncProcesses: (profileId, saveFolder) =>
     ipcRenderer.invoke('process:sync', profileId, saveFolder),
-  saveProcess: (profileId, companyName, patch) =>
-    ipcRenderer.invoke('process:save', profileId, companyName, patch),
+  checkCompanyDuplicate: (saveFolder, companyName, exceptPath) =>
+    ipcRenderer.invoke('process:checkDuplicate', saveFolder, companyName, exceptPath),
   deleteProcesses: (profileId) =>
     ipcRenderer.invoke('process:delete', profileId),
   readJdFile: (filePath) => ipcRenderer.invoke('process:readJd', filePath),
   readResumeFile: (filePath) =>
     ipcRenderer.invoke('process:readResume', filePath),
-  renameProcess: (profileId, saveFolder, oldName, newName) =>
-    ipcRenderer.invoke('process:rename', profileId, saveFolder, oldName, newName),
-  deleteProcessFolder: (profileId, saveFolder, companyName) =>
-    ipcRenderer.invoke('process:deleteFolder', profileId, saveFolder, companyName),
+  openFolder: (folderPath) =>
+    ipcRenderer.invoke('process:openFolder', folderPath),
+  renameProcess: (profileId, saveFolder, relativePath, newName) =>
+    ipcRenderer.invoke('process:rename', profileId, saveFolder, relativePath, newName),
+  deleteProcessFolder: (profileId, saveFolder, relativePath) =>
+    ipcRenderer.invoke('process:deleteFolder', profileId, saveFolder, relativePath),
+  exportProcessesZip: (saveFolder, dateKey, firstName, lastName) =>
+    ipcRenderer.invoke('process:exportZip', saveFolder, dateKey, firstName, lastName),
+  pickImportZip: () => ipcRenderer.invoke('process:pickImportZip'),
+  analyzeImportZip: (saveFolder, zipPath) =>
+    ipcRenderer.invoke('process:analyzeImportZip', saveFolder, zipPath),
+  importProcessesZip: (saveFolder, zipPath, importNames) =>
+    ipcRenderer.invoke('process:importZip', saveFolder, zipPath, importNames),
 
   gatherBackup: () => ipcRenderer.invoke('backup:gather'),
   saveBackup: (payload) => ipcRenderer.invoke('backup:save', payload),

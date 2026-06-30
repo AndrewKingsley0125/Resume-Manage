@@ -1,34 +1,32 @@
 /**
  * Manage-process view: lists every company subfolder under the active
- * profile's save folder, lets the user track status / step, and opens
- * inline viewers for the JD.txt and resume PDF stored in each folder.
+ * profile's save folder and opens inline viewers for JD.txt and resume PDF.
  *
  * Exposes window.App.Process.
  */
 (function () {
   const $ = (id) => document.getElementById(id);
 
-  const STATUSES = ['Pending', 'Intro', 'HR', 'Tech', 'Panel', 'Final'];
-
   /** @type {{id:string, saveFolder:string}|null} */
   let currentProfile = null;
   /** @type {Array<any>} */
   let processes = [];
-  /** 'date' | 'step' */
-  let sortKey = 'date';
   /** 'asc' | 'desc' */
   let sortDir = 'desc';
   let searchCompany = '';
   let searchDate = '';
-  let statusFilter = '';
-  /** @type {Map<string, number>} - debounce timers keyed by company name */
-  const saveTimers = new Map();
   let resumeBlobUrl = null;
   let bound = false;
   /** @type {any|null} */
   let pendingRename = null;
   /** @type {any|null} */
   let pendingDelete = null;
+  /** @type {string|null} */
+  let pendingImportZipPath = null;
+  /** @type {Array<{name:string,status:string,existingName?:string}>} */
+  let pendingImportCompanies = [];
+  /** @type {string} */
+  let pendingImportDate = '';
 
   // ---------- Public API ----------
 
@@ -44,31 +42,20 @@
     hideModal($('process-modal'));
     currentProfile = null;
     processes = [];
-    saveTimers.forEach((t) => clearTimeout(t));
-    saveTimers.clear();
   }
 
   // ---------- Loading ----------
 
-  /**
-   * Fast load: reads the persisted process list (no directory scan once it has
-   * been seeded). Used when opening the modal and after in-app mutations
-   * (export / rename / delete / status / step) which keep the list in sync.
-   */
+  /** Scan the save folder on disk (source of truth for company list). */
   async function refresh() {
-    await load(false);
+    await load();
   }
 
-  /**
-   * Force a re-scan of the save folder and reconcile it with the stored list
-   * (picks up folders added/removed outside the app). Wired to the Refresh
-   * button only.
-   */
   async function resync() {
-    await load(true);
+    await load();
   }
 
-  async function load(fromDisk) {
+  async function load() {
     if (!currentProfile) return;
     const sf = (currentProfile.saveFolder || '').trim();
     const emptyEl = $('process-empty');
@@ -80,12 +67,10 @@
       return;
     }
     try {
-      const list = fromDisk
-        ? await window.api.syncProcesses(currentProfile.id, sf)
-        : await window.api.listProcesses(currentProfile.id, sf);
+      const list = await window.api.listProcesses(currentProfile.id, sf);
       processes = Array.isArray(list) ? list : [];
       emptyEl.textContent = processes.length === 0
-        ? 'No applications tracked yet. Export a resume to add one, or click Refresh to scan the folder.'
+        ? 'No applications found in the save folder. Export a resume to add one, or click Refresh to scan the folder.'
         : '';
     } catch (err) {
       console.error('load processes failed:', err);
@@ -112,17 +97,9 @@
       const q = searchDate.toLowerCase();
       rows = rows.filter((p) => formatDate(p.date).toLowerCase().includes(q));
     }
-    if (statusFilter) {
-      rows = rows.filter((p) => p.status === statusFilter);
-    }
 
     rows.sort((a, b) => {
       const sign = sortDir === 'asc' ? 1 : -1;
-      if (sortKey === 'step') {
-        const diff = (a.step || 0) - (b.step || 0);
-        // Tie-break by date so equal-step rows stay grouped consistently.
-        return diff !== 0 ? sign * diff : (b.date - a.date);
-      }
       return sign * ((a.date || 0) - (b.date || 0));
     });
 
@@ -132,18 +109,16 @@
 
   function updateSortHeaders() {
     document.querySelectorAll('.process-table thead th.sortable').forEach((th) => {
-      const key = th.getAttribute('data-sort');
       const arrow = th.querySelector('.sort-arrow');
-      const isActive = key === sortKey;
-      th.classList.toggle('active', isActive);
-      if (arrow) arrow.textContent = isActive ? (sortDir === 'asc' ? '↑' : '↓') : '↕';
+      th.classList.toggle('active', true);
+      if (arrow) arrow.textContent = sortDir === 'asc' ? '↑' : '↓';
     });
   }
 
   function buildRow(p, idx) {
     const tr = document.createElement('tr');
     tr.appendChild(td(String(idx), 'col-no'));
-    tr.appendChild(td(p.companyName, 'col-company'));
+    tr.appendChild(makeCompanyCell(p));
     tr.appendChild(td(formatDate(p.date), 'col-date'));
 
     // JD cell
@@ -168,43 +143,6 @@
     }
     tr.appendChild(rTd);
 
-    // Status cell
-    const sTd = document.createElement('td');
-    sTd.className = 'col-status';
-    const sel = document.createElement('select');
-    for (const s of STATUSES) {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      sel.appendChild(opt);
-    }
-    sel.value = p.status;
-    applyStatusClass(sel, p.status);
-    sel.addEventListener('change', () => {
-      p.status = sel.value;
-      applyStatusClass(sel, p.status);
-      scheduleSave(p);
-    });
-    sTd.appendChild(sel);
-    tr.appendChild(sTd);
-
-    // Step cell
-    const stTd = document.createElement('td');
-    stTd.className = 'col-step';
-    const stInp = document.createElement('input');
-    stInp.type = 'number';
-    stInp.min = '0';
-    stInp.step = '1';
-    stInp.className = 'step-input';
-    stInp.value = String(p.step);
-    stInp.addEventListener('input', () => {
-      const n = Number(stInp.value);
-      p.step = isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-      scheduleSave(p);
-    });
-    stTd.appendChild(stInp);
-    tr.appendChild(stTd);
-
     // Actions cell (edit / delete)
     const aTd = document.createElement('td');
     aTd.className = 'col-actions';
@@ -213,6 +151,35 @@
     tr.appendChild(aTd);
 
     return tr;
+  }
+
+  function makeCompanyCell(p) {
+    const cell = document.createElement('td');
+    cell.className = 'col-company';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'company-folder-link';
+    btn.textContent = p.companyName;
+    btn.title = 'Open folder in file explorer';
+    btn.setAttribute('aria-label', `Open folder for ${p.companyName}`);
+    btn.addEventListener('click', () => openCompanyFolder(p));
+    cell.appendChild(btn);
+    return cell;
+  }
+
+  async function openCompanyFolder(p) {
+    if (!p.folderPath) {
+      toast('Folder path not available', { kind: 'error' });
+      return;
+    }
+    try {
+      const res = await window.api.openFolder(p.folderPath);
+      if (res && res.error) {
+        toast(`Could not open folder: ${res.error}`, { kind: 'error' });
+      }
+    } catch (err) {
+      toast(`Could not open folder: ${err.message || err}`, { kind: 'error' });
+    }
   }
 
   function makeActionBtn(label, title, onClick, danger) {
@@ -242,11 +209,6 @@
     return b;
   }
 
-  function applyStatusClass(sel, status) {
-    sel.className = '';
-    sel.classList.add('status-' + String(status || 'Pending').toLowerCase());
-  }
-
   function formatDate(ts) {
     if (!ts) return '';
     const d = new Date(ts);
@@ -260,24 +222,324 @@
     return `${mm}/${dd}/${yyyy} ${hh}:${mi}:${ss}`;
   }
 
-  // ---------- Persistence ----------
+  function todayDateKey() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
 
-  function scheduleSave(p) {
+  function localDateKey(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function getExportDate() {
+    const el = $('process-export-date');
+    const v = el && el.value ? el.value.trim() : '';
+    return v || todayDateKey();
+  }
+
+  function companiesForExportDate(dateKey) {
+    return processes.filter((p) => localDateKey(p.date) === dateKey);
+  }
+
+  // ---------- Export / import ----------
+
+  async function openExportModal() {
     if (!currentProfile) return;
-    const key = p.companyName;
-    if (saveTimers.has(key)) clearTimeout(saveTimers.get(key));
-    const timer = setTimeout(async () => {
-      saveTimers.delete(key);
-      try {
-        await window.api.saveProcess(currentProfile.id, p.companyName, {
-          status: p.status,
-          step: p.step,
-        });
-      } catch (err) {
-        console.error('saveProcess failed:', err);
+    const sf = (currentProfile.saveFolder || '').trim();
+    if (!sf) {
+      toast('No save folder configured for this profile.', { kind: 'error' });
+      return;
+    }
+    await resync();
+    const dateEl = $('process-export-date');
+    if (dateEl) dateEl.value = todayDateKey();
+    updateExportPreview();
+    showModal($('process-export-modal'));
+  }
+
+  function closeExportModal() {
+    hideModal($('process-export-modal'));
+  }
+
+  function updateExportPreview() {
+    const dateKey = getExportDate();
+    const companies = companiesForExportDate(dateKey);
+    const summary = $('process-export-summary');
+    const list = $('process-export-list');
+    const confirmBtn = $('process-export-confirm');
+
+    if (summary) {
+      summary.textContent = companies.length === 0
+        ? `No applications found for ${dateKey}.`
+        : `${companies.length} application(s) for ${dateKey}:`;
+    }
+
+    if (list) {
+      list.innerHTML = '';
+      companies.forEach((c) => {
+        const li = document.createElement('li');
+        li.textContent = c.companyName;
+        list.appendChild(li);
+      });
+    }
+
+    if (confirmBtn) confirmBtn.disabled = companies.length === 0;
+  }
+
+  async function confirmExportZip() {
+    if (!currentProfile) return;
+    const sf = (currentProfile.saveFolder || '').trim();
+    const dateKey = getExportDate();
+    const companies = companiesForExportDate(dateKey);
+    if (!companies.length) return;
+
+    const confirmBtn = $('process-export-confirm');
+    const original = confirmBtn ? confirmBtn.textContent : '';
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Exporting…';
+    }
+    try {
+      const res = await window.api.exportProcessesZip(
+        sf,
+        dateKey,
+        currentProfile.firstName || '',
+        currentProfile.lastName || ''
+      );
+      if (!res || res.canceled) return;
+      if (res.error) {
+        toast(res.error, { kind: 'error' });
+        return;
       }
-    }, 350);
-    saveTimers.set(key, timer);
+      closeExportModal();
+      toast(
+        `Exported ${res.count} application(s) for ${res.date}`,
+        {
+          actionLabel: res.path ? 'Reveal' : undefined,
+          onAction: res.path ? () => window.api.revealInFolder(res.path) : undefined,
+        }
+      );
+    } catch (err) {
+      toast(`Export failed: ${err.message || err}`, { kind: 'error' });
+    } finally {
+      if (confirmBtn) {
+        confirmBtn.disabled = companiesForExportDate(getExportDate()).length === 0;
+        confirmBtn.textContent = original;
+      }
+    }
+  }
+
+  async function openImportModal() {
+    if (!currentProfile) return;
+    const sf = (currentProfile.saveFolder || '').trim();
+    if (!sf) {
+      toast('No save folder configured for this profile.', { kind: 'error' });
+      return;
+    }
+    await resync();
+    resetImportPreview();
+    showModal($('process-import-modal'));
+  }
+
+  function closeImportModal() {
+    hideModal($('process-import-modal'));
+    resetImportPreview();
+  }
+
+  function resetImportPreview() {
+    pendingImportZipPath = null;
+    pendingImportCompanies = [];
+    pendingImportDate = '';
+    const fileEl = $('process-import-file');
+    const summary = $('process-import-summary');
+    const tbody = $('process-import-tbody');
+    const tableWrap = $('process-import-table-wrap');
+    const legend = $('process-import-legend');
+    const confirmBtn = $('process-import-confirm');
+    if (fileEl) fileEl.textContent = 'No file selected';
+    if (summary) summary.textContent = '';
+    if (tbody) tbody.innerHTML = '';
+    if (tableWrap) tableWrap.classList.add('hidden');
+    if (legend) legend.classList.add('hidden');
+    if (confirmBtn) confirmBtn.disabled = true;
+  }
+
+  function importCounts() {
+    const total = pendingImportCompanies.length;
+    const newCount = pendingImportCompanies.filter((c) => c.status === 'new').length;
+    return { total, newCount, duplicateCount: total - newCount };
+  }
+
+  function updateImportSummary() {
+    const summary = $('process-import-summary');
+    const confirmBtn = $('process-import-confirm');
+    const { total, newCount, duplicateCount } = importCounts();
+    if (summary) {
+      const datePart = pendingImportDate ? ` · ${pendingImportDate}` : '';
+      summary.textContent =
+        `Total: ${total} · New: ${newCount} · Duplicates: ${duplicateCount}${datePart}`;
+    }
+    if (confirmBtn) confirmBtn.disabled = newCount === 0;
+  }
+
+  function toggleImportStatus(index) {
+    const company = pendingImportCompanies[index];
+    if (!company) return;
+    company.status = company.status === 'new' ? 'duplicate' : 'new';
+    renderImportRows();
+    updateImportSummary();
+  }
+
+  function renderImportRows() {
+    const tbody = $('process-import-tbody');
+    const tableWrap = $('process-import-table-wrap');
+    const legend = $('process-import-legend');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    pendingImportCompanies.forEach((c, index) => {
+      const tr = document.createElement('tr');
+      tr.className = c.status === 'new' ? 'import-new' : 'import-duplicate';
+
+      const nameTd = document.createElement('td');
+      nameTd.className = 'col-import-company';
+      let label = c.name;
+      if (c.status === 'duplicate' && c.existingName && c.existingName !== c.name) {
+        label += ` (matches "${c.existingName}")`;
+      }
+      nameTd.textContent = label;
+      tr.appendChild(nameTd);
+
+      const statusTd = document.createElement('td');
+      statusTd.className = 'col-import-status';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className =
+        'import-status-toggle ' + (c.status === 'new' ? 'is-new' : 'is-duplicate');
+      btn.textContent = c.status === 'new' ? 'New' : 'Duplicate';
+      btn.title = c.status === 'new'
+        ? 'Mark as duplicate (skip on import)'
+        : 'Mark as new (include on import)';
+      btn.addEventListener('click', () => toggleImportStatus(index));
+      statusTd.appendChild(btn);
+      tr.appendChild(statusTd);
+
+      tbody.appendChild(tr);
+    });
+
+    if (tableWrap) tableWrap.classList.toggle('hidden', pendingImportCompanies.length === 0);
+    if (legend) legend.classList.toggle('hidden', pendingImportCompanies.length === 0);
+  }
+
+  function renderImportPreview(preview) {
+    const fileEl = $('process-import-file');
+
+    if (fileEl) {
+      fileEl.textContent = preview.fileName || pathBasename(pendingImportZipPath);
+    }
+
+    pendingImportDate = preview.date || '';
+    pendingImportCompanies = (preview.companies || []).map((c) => ({
+      name: c.name,
+      status: c.status === 'new' ? 'new' : 'duplicate',
+      existingName: c.existingName,
+    }));
+
+    renderImportRows();
+    updateImportSummary();
+  }
+
+  function pathBasename(p) {
+    if (!p) return '';
+    const parts = String(p).replace(/\\/g, '/').split('/');
+    return parts[parts.length - 1] || p;
+  }
+
+  async function pickImportZip() {
+    if (!currentProfile) return;
+    const sf = (currentProfile.saveFolder || '').trim();
+    if (!sf) return;
+
+    const pickBtn = $('process-import-pick');
+    const original = pickBtn ? pickBtn.textContent : '';
+    if (pickBtn) {
+      pickBtn.disabled = true;
+      pickBtn.textContent = 'Reading…';
+    }
+
+    try {
+      const pick = await window.api.pickImportZip();
+      if (!pick || pick.canceled) return;
+
+      pendingImportZipPath = pick.path;
+      const preview = await window.api.analyzeImportZip(sf, pick.path);
+      if (!preview || preview.error) {
+        pendingImportZipPath = null;
+        toast(preview && preview.error ? preview.error : 'Failed to read ZIP', {
+          kind: 'error',
+        });
+        resetImportPreview();
+        return;
+      }
+      renderImportPreview(preview);
+    } catch (err) {
+      pendingImportZipPath = null;
+      toast(`Failed to read ZIP: ${err.message || err}`, { kind: 'error' });
+      resetImportPreview();
+    } finally {
+      if (pickBtn) {
+        pickBtn.disabled = false;
+        pickBtn.textContent = original;
+      }
+    }
+  }
+
+  async function confirmImportZip() {
+    if (!currentProfile || !pendingImportZipPath) return;
+    const sf = (currentProfile.saveFolder || '').trim();
+
+    const confirmBtn = $('process-import-confirm');
+    const original = confirmBtn ? confirmBtn.textContent : '';
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Importing…';
+    }
+
+    try {
+      const importNames = pendingImportCompanies
+        .filter((c) => c.status === 'new')
+        .map((c) => c.name);
+      const res = await window.api.importProcessesZip(
+        sf,
+        pendingImportZipPath,
+        importNames
+      );
+      if (!res || res.error) {
+        toast(res && res.error ? res.error : 'Import failed', { kind: 'error' });
+        return;
+      }
+      closeImportModal();
+      const dup = res.skipped || 0;
+      const neu = res.imported || 0;
+      toast(`Import complete · ${neu} new, ${dup} duplicate(s) skipped`);
+      if (neu > 0) await refresh();
+    } catch (err) {
+      toast(`Import failed: ${err.message || err}`, { kind: 'error' });
+    } finally {
+      if (confirmBtn) {
+        confirmBtn.textContent = original;
+        confirmBtn.disabled = !pendingImportZipPath;
+      }
+    }
   }
 
   // ---------- JD viewer ----------
@@ -347,13 +609,12 @@
       return;
     }
     const sf = (currentProfile.saveFolder || '').trim();
-    const oldName = pendingRename.companyName;
 
     try {
       const res = await window.api.renameProcess(
         currentProfile.id,
         sf,
-        oldName,
+        pendingRename.relativePath,
         newName
       );
       if (!res || res.error) {
@@ -400,12 +661,13 @@
     if (!currentProfile || !pendingDelete) return;
     const sf = (currentProfile.saveFolder || '').trim();
     const name = pendingDelete.companyName;
+    const relativePath = pendingDelete.relativePath || pendingDelete.companyName;
     closeDeleteModal();
     try {
       const res = await window.api.deleteProcessFolder(
         currentProfile.id,
         sf,
-        name
+        relativePath
       );
       if (!res || res.error) {
         toast(`Delete failed: ${(res && res.error) || 'unknown error'}`, {
@@ -511,6 +773,27 @@
     document.querySelectorAll('[data-delete-close]').forEach((el) => {
       el.addEventListener('click', closeDeleteModal);
     });
+    document.querySelectorAll('[data-export-close]').forEach((el) => {
+      el.addEventListener('click', closeExportModal);
+    });
+    document.querySelectorAll('[data-import-close]').forEach((el) => {
+      el.addEventListener('click', closeImportModal);
+    });
+
+    const exportConfirmBtn = $('process-export-confirm');
+    if (exportConfirmBtn) exportConfirmBtn.addEventListener('click', confirmExportZip);
+
+    const exportDateInput = $('process-export-date');
+    if (exportDateInput) {
+      exportDateInput.addEventListener('change', updateExportPreview);
+      exportDateInput.addEventListener('input', updateExportPreview);
+    }
+
+    const importPickBtn = $('process-import-pick');
+    if (importPickBtn) importPickBtn.addEventListener('click', pickImportZip);
+
+    const importConfirmBtn = $('process-import-confirm');
+    if (importConfirmBtn) importConfirmBtn.addEventListener('click', confirmImportZip);
 
     const renameBtn = $('process-rename-confirm');
     if (renameBtn) renameBtn.addEventListener('click', confirmRename);
@@ -553,38 +836,32 @@
 
     document.querySelectorAll('.process-table thead th.sortable').forEach((th) => {
       th.addEventListener('click', () => {
-        const key = th.getAttribute('data-sort');
-        if (!key) return;
-        if (key === sortKey) {
-          sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-        } else {
-          sortKey = key;
-          // Sensible defaults: most-recent first for date, highest first for step.
-          sortDir = 'desc';
-        }
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
         render();
       });
     });
 
-    const statusSel = $('process-status-filter');
-    if (statusSel) {
-      statusSel.addEventListener('change', (e) => {
-        statusFilter = e.target.value || '';
-        render();
-      });
-    }
-
     const refreshBtn = $('process-refresh');
     if (refreshBtn) refreshBtn.addEventListener('click', resync);
+
+    const exportBtn = $('process-export-zip');
+    if (exportBtn) exportBtn.addEventListener('click', openExportModal);
+
+    const importBtn = $('process-import-zip');
+    if (importBtn) importBtn.addEventListener('click', openImportModal);
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       const dm = $('process-delete-modal');
+      const im = $('process-import-modal');
+      const em = $('process-export-modal');
       const rm = $('process-rename-modal');
       const r = $('resume-modal');
       const j = $('jd-modal');
       const p = $('process-modal');
       if (dm && !dm.classList.contains('hidden')) { closeDeleteModal(); return; }
+      if (im && !im.classList.contains('hidden')) { closeImportModal(); return; }
+      if (em && !em.classList.contains('hidden')) { closeExportModal(); return; }
       if (rm && !rm.classList.contains('hidden')) { closeRenameModal(); return; }
       if (r && !r.classList.contains('hidden')) { closeResumeModal(); return; }
       if (j && !j.classList.contains('hidden')) { closeJdModal(); return; }

@@ -1589,6 +1589,24 @@
       : '';
   }
 
+  async function warnIfCompanyDuplicate(company) {
+    const saveFolder = (currentProfile && currentProfile.saveFolder || '').trim();
+    if (!saveFolder || !company) return false;
+    try {
+      const res = await window.api.checkCompanyDuplicate(saveFolder, company);
+      if (!res || !res.duplicate) return false;
+      showToast(res.message || 'A similar company folder already exists.', {
+        kind: 'error',
+        actionLabel: res.path ? 'Open folder' : undefined,
+        onAction: res.path ? () => window.api.revealInFolder(res.path) : undefined,
+      });
+      return true;
+    } catch (err) {
+      console.error('checkCompanyDuplicate failed:', err);
+      return false;
+    }
+  }
+
   async function exportPdf() {
     if (!currentResume || !currentProfile) return;
 
@@ -1612,6 +1630,8 @@
       }
       company = entered;
     }
+
+    if (await warnIfCompanyDuplicate(company)) return;
 
     const html = renderHtml();
     if (!html) return;

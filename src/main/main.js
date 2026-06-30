@@ -1,13 +1,16 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
+const AdmZip = require('adm-zip');
 
 const PROFILES_FILE = 'profiles.json';
 const RESUMES_DIR = 'resumes';
 const PROMPTS_DIR = 'prompts';
 const JDS_DIR = 'jds';
 const PROCESSES_DIR = 'processes';
-const PROCESS_STATUSES = ['Pending', 'Intro', 'HR', 'Tech', 'Panel', 'Final'];
+const PROCESS_EXPORT_SCHEMA = 'resume-manager-process-export';
+const PROCESS_EXPORT_VERSION = 1;
 
 function getProfilesPath() {
   return path.join(app.getPath('userData'), PROFILES_FILE);
@@ -182,7 +185,7 @@ function deleteJd(profileId) {
 }
 
 // ----------------------------------------------------------------------------
-// Process tracking (job application stages)
+// Manage list (read from the profile save folder on disk)
 // ----------------------------------------------------------------------------
 
 function getProcessesDir() {
@@ -195,102 +198,7 @@ function getProcessesPath(profileId) {
   return path.join(getProcessesDir(), `${id}.json`);
 }
 
-// The process store is the source of truth for the manage-process table.
-// It is a JSON object: { version, seeded, entries: { [companyName]: row } }.
-// `seeded` means we have already built the list from the save folder at least
-// once, so subsequent loads can skip the (slow) directory scan and read the
-// list directly. The list is kept in sync incrementally by export / rename /
-// delete; an explicit "Refresh" reconciles it with the disk again.
-const PROCESS_STORE_VERSION = 2;
-
-function emptyProcessStore() {
-  return { version: PROCESS_STORE_VERSION, seeded: false, entries: {} };
-}
-
-/**
- * Coerce a stored (or scanned) value into a complete process row. `companyName`
- * is the folder/list key. Unknown/invalid fields fall back to safe defaults.
- */
-function normalizeProcessEntry(companyName, val) {
-  const v = val && typeof val === 'object' ? val : {};
-  const status = PROCESS_STATUSES.includes(v.status) ? v.status : 'Pending';
-  const stepNum = Number(v.step);
-  const step = isFinite(stepNum) && stepNum >= 0 ? Math.floor(stepNum) : 0;
-  const dateNum = Number(v.date);
-  const date = isFinite(dateNum) && dateNum > 0 ? dateNum : 0;
-  const pdfPath = typeof v.pdfPath === 'string' && v.pdfPath ? v.pdfPath : null;
-  const jdPath = typeof v.jdPath === 'string' && v.jdPath ? v.jdPath : null;
-  return {
-    companyName,
-    date,
-    pdfPath,
-    jdPath,
-    hasJd: v.hasJd != null ? !!v.hasJd : !!jdPath,
-    hasResume: v.hasResume != null ? !!v.hasResume : !!pdfPath,
-    status,
-    step,
-    updatedAt: Number(v.updatedAt) || 0,
-  };
-}
-
-/**
- * Read the process store for a profile. Handles the legacy flat format
- * (`{ [company]: { status, step } }`) by converting it and marking the result
- * as not-yet-seeded so the next load enriches it from disk once.
- */
-function readProcessStore(profileId) {
-  const p = getProcessesPath(profileId);
-  if (!p || !fs.existsSync(p)) return emptyProcessStore();
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  } catch (err) {
-    console.error('Failed to read processes:', err);
-    return emptyProcessStore();
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return emptyProcessStore();
-  }
-  // New (v2+) format.
-  if (parsed.entries && typeof parsed.entries === 'object') {
-    const entries = {};
-    for (const [company, val] of Object.entries(parsed.entries)) {
-      entries[company] = normalizeProcessEntry(company, val);
-    }
-    return {
-      version: PROCESS_STORE_VERSION,
-      seeded: parsed.seeded === true,
-      entries,
-    };
-  }
-  // Legacy flat format: keep status/step, but treat as unseeded so the next
-  // load performs a one-time scan to fill in date / paths / file presence.
-  const entries = {};
-  for (const [company, val] of Object.entries(parsed)) {
-    if (!val || typeof val !== 'object') continue;
-    entries[company] = normalizeProcessEntry(company, val);
-  }
-  return { version: PROCESS_STORE_VERSION, seeded: false, entries };
-}
-
-function writeProcessStore(profileId, store) {
-  const p = getProcessesPath(profileId);
-  if (!p) return false;
-  try {
-    fs.mkdirSync(getProcessesDir(), { recursive: true });
-    const payload = {
-      version: PROCESS_STORE_VERSION,
-      seeded: store && store.seeded === true,
-      entries: (store && store.entries) || {},
-    };
-    fs.writeFileSync(p, JSON.stringify(payload, null, 2), 'utf-8');
-    return true;
-  } catch (err) {
-    console.error('Failed to write processes:', err);
-    return false;
-  }
-}
-
+/** Remove legacy per-profile process JSON (applications live in the save folder). */
 function deleteProcessesData(profileId) {
   const p = getProcessesPath(profileId);
   if (!p) return false;
@@ -303,135 +211,220 @@ function deleteProcessesData(profileId) {
   }
 }
 
-function storeToList(store) {
-  return Object.values((store && store.entries) || {});
+function processRowFromDisk(companyName, relativePath, disk, folderPath) {
+  return {
+    companyName,
+    relativePath,
+    folderPath,
+    date: disk.date,
+    pdfPath: disk.pdfPath,
+    jdPath: disk.jdPath,
+    hasJd: disk.hasJd,
+    hasResume: disk.hasResume,
+  };
+}
+
+function normalizeCompanyKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let cur = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    const swap = prev;
+    prev = cur;
+    cur = swap;
+  }
+  return prev[n];
+}
+
+const COMPANY_DUPLICATE_MAX_EDITS = 2;
+const COMPANY_DUPLICATE_MIN_FUZZY_LEN = 3;
+
+/**
+ * Compare company names for export/rename duplicate detection:
+ * 1. Normalize: lowercase, strip spaces/punctuation/special chars.
+ * 2. Exact match on normalized form.
+ * 3. Otherwise allow up to two character edits (missing/extra/swapped letters).
+ */
+function companyNamesAreDuplicate(candidate, existing) {
+  const a = normalizeCompanyKey(candidate);
+  const b = normalizeCompanyKey(existing);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const minLen = Math.min(a.length, b.length);
+  const maxLen = Math.max(a.length, b.length);
+  if (minLen < COMPANY_DUPLICATE_MIN_FUZZY_LEN) return false;
+  if (maxLen - minLen > COMPANY_DUPLICATE_MAX_EDITS) return false;
+  return levenshtein(a, b) <= COMPANY_DUPLICATE_MAX_EDITS;
+}
+
+function* iterateCompanyFolders(saveFolder) {
+  if (!saveFolder || !fs.existsSync(saveFolder)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(saveFolder, { withFileTypes: true });
+  } catch (_) {
+    return;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    yield { name: e.name, path: path.join(saveFolder, e.name) };
+  }
+}
+
+function findExistingCompanyFolder(saveFolder, companyName, exceptPath = null) {
+  if (!saveFolder || !companyName) return null;
+  const exceptResolved = exceptPath ? path.resolve(exceptPath) : null;
+  for (const entry of iterateCompanyFolders(saveFolder)) {
+    if (exceptResolved && path.resolve(entry.path) === exceptResolved) continue;
+    if (companyNamesAreDuplicate(companyName, entry.name)) return entry.path;
+  }
+  return null;
+}
+
+function duplicateCompanyMessage(candidate, existingPath) {
+  const existingName = path.basename(existingPath);
+  if (companyNamesAreDuplicate(candidate, existingName) &&
+      normalizeCompanyKey(candidate) === normalizeCompanyKey(existingName)) {
+    return (
+      `A folder named "${existingName}" already exists in this save folder. ` +
+      'Rename it or choose a different company name.'
+    );
+  }
+  return (
+    `A folder named "${existingName}" already exists and matches "${candidate}" ` +
+    '(ignoring spaces, punctuation, or up to two letter differences). ' +
+    'Rename the existing folder or choose a different company name.'
+  );
+}
+
+/** Check save folder for a fuzzy duplicate before export or rename. */
+function checkCompanyDuplicate(saveFolder, companyNameRaw, exceptPath = null) {
+  const company = safePathSegment(companyNameRaw);
+  if (!company) {
+    return { duplicate: false };
+  }
+  const existingPath = findExistingCompanyFolder(saveFolder, company, exceptPath);
+  if (!existingPath) {
+    return { duplicate: false };
+  }
+  return {
+    duplicate: true,
+    path: existingPath,
+    existingName: path.basename(existingPath),
+    message: duplicateCompanyMessage(company, existingPath),
+  };
+}
+
+function scanCompanyFolder(folderPath) {
+  let pdfPath = null;
+  let jdPath = null;
+  try {
+    const sub = fs.readdirSync(folderPath, { withFileTypes: true });
+    for (const f of sub) {
+      if (!f.isFile()) continue;
+      const lower = f.name.toLowerCase();
+      if (!pdfPath && lower.endsWith('.pdf')) pdfPath = path.join(folderPath, f.name);
+      if (!jdPath && lower === 'jd.txt') jdPath = path.join(folderPath, f.name);
+    }
+  } catch (_) {
+    return null;
+  }
+  let stat;
+  try {
+    stat = fs.statSync(folderPath);
+  } catch (_) {
+    return null;
+  }
+  const date = stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs || 0;
+  return { date, pdfPath, jdPath, hasJd: !!jdPath, hasResume: !!pdfPath };
+}
+
+function toRelativePath(saveFolder, absolutePath) {
+  return path.relative(saveFolder, absolutePath).split(path.sep).join('/');
+}
+
+function resolveRelativePath(saveFolder, relativePath) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized || normalized.includes('..')) return null;
+  const abs = path.join(saveFolder, ...normalized.split('/'));
+  if (!isPathInside(saveFolder, abs)) return null;
+  return abs;
+}
+
+function removeEmptyParentDirs(dirPath, stopAt) {
+  let current = dirPath;
+  while (current && current !== stopAt && isPathInside(stopAt, current)) {
+    try {
+      if (fs.readdirSync(current).length > 0) break;
+      fs.rmdirSync(current);
+      current = path.dirname(current);
+    } catch (_) {
+      break;
+    }
+  }
 }
 
 /**
- * Scan a save folder and return a Map of companyName -> disk info
- * (date, pdfPath, jdPath, hasJd, hasResume). This is the only place that
- * touches the file system for discovery; it is used to seed and to re-sync.
+ * Scan `{saveFolder}/{company}/` folders on disk.
  */
 function scanSaveFolder(saveFolder) {
-  const map = new Map();
+  const items = [];
   if (!saveFolder || typeof saveFolder !== 'string' || !fs.existsSync(saveFolder)) {
-    return map;
+    return items;
   }
+
   let entries;
   try {
     entries = fs.readdirSync(saveFolder, { withFileTypes: true });
   } catch (err) {
     console.error('scanSaveFolder: cannot read save folder:', err);
-    return map;
+    return items;
   }
+
   for (const e of entries) {
     if (!e.isDirectory()) continue;
-    const folderPath = path.join(saveFolder, e.name);
-    let stat;
-    try { stat = fs.statSync(folderPath); } catch (_) { continue; }
-
-    let pdfPath = null;
-    let jdPath = null;
-    try {
-      const sub = fs.readdirSync(folderPath, { withFileTypes: true });
-      for (const f of sub) {
-        if (!f.isFile()) continue;
-        const lower = f.name.toLowerCase();
-        if (!pdfPath && lower.endsWith('.pdf')) pdfPath = path.join(folderPath, f.name);
-        if (!jdPath && lower === 'jd.txt') jdPath = path.join(folderPath, f.name);
-      }
-    } catch (_) { /* unreadable subfolder, skip files */ }
-
-    const date = stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs || 0;
-    map.set(e.name, { date, pdfPath, jdPath, hasJd: !!jdPath, hasResume: !!pdfPath });
+    const companyPath = path.join(saveFolder, e.name);
+    const disk = scanCompanyFolder(companyPath);
+    if (!disk) continue;
+    items.push(processRowFromDisk(
+      e.name,
+      toRelativePath(saveFolder, companyPath),
+      disk,
+      companyPath
+    ));
   }
-  return map;
+
+  items.sort((a, b) => (b.date || 0) - (a.date || 0));
+  return items;
 }
 
-/**
- * Re-scan the save folder and reconcile it with the persisted store: add new
- * folders, refresh file presence / paths for existing ones, and drop entries
- * whose folder no longer exists. Persists and returns the resulting list.
- * This is the heavy path — only called on first seed and on explicit Refresh.
- */
-function syncProcesses(profileId, saveFolder) {
-  const store = readProcessStore(profileId);
+/** Scan the save folder; company rows come from disk only (no local store). */
+function loadProcesses(_profileId, saveFolder) {
   if (!saveFolder || typeof saveFolder !== 'string' || !fs.existsSync(saveFolder)) {
-    // Nothing to scan; return whatever we already have without wiping it.
-    return storeToList(store);
+    return [];
   }
-  const scan = scanSaveFolder(saveFolder);
-  const nextEntries = {};
-  for (const [company, info] of scan.entries()) {
-    const prev = store.entries[company] || {};
-    nextEntries[company] = normalizeProcessEntry(company, {
-      status: prev.status,
-      step: prev.step,
-      updatedAt: prev.updatedAt,
-      date: prev.date || info.date,
-      pdfPath: info.pdfPath,
-      jdPath: info.jdPath,
-      hasJd: info.hasJd,
-      hasResume: info.hasResume,
-    });
-  }
-  const next = { version: PROCESS_STORE_VERSION, seeded: true, entries: nextEntries };
-  writeProcessStore(profileId, next);
-  return storeToList(next);
+  return scanSaveFolder(saveFolder);
 }
 
-/**
- * Fast load for the manage-process table. Reads the persisted list directly
- * (no directory scan) once it has been seeded. Only the very first load (or a
- * legacy store) triggers a one-time scan.
- */
-function loadProcesses(profileId, saveFolder) {
-  const store = readProcessStore(profileId);
-  if (store.seeded) return storeToList(store);
-  return syncProcesses(profileId, saveFolder);
-}
-
-/**
- * Add (or replace) a single entry in the store without scanning the folder.
- * Called right after a successful export so the in-memory list stays in sync
- * with the file system.
- */
-function addProcessEntry(profileId, companyName, info) {
-  if (typeof companyName !== 'string' || !companyName) return false;
-  const store = readProcessStore(profileId);
-  const prev = store.entries[companyName] || {};
-  store.entries[companyName] = normalizeProcessEntry(companyName, {
-    status: prev.status || 'Pending',
-    step: prev.step,
-    date: (info && info.date) || prev.date || Date.now(),
-    pdfPath: (info && info.pdfPath) || null,
-    jdPath: (info && info.jdPath) || null,
-    hasJd: info ? !!info.jdPath : false,
-    hasResume: info ? !!info.pdfPath : false,
-    updatedAt: Date.now(),
-  });
-  // An add implies the list is now initialized.
-  store.seeded = true;
-  return writeProcessStore(profileId, store);
-}
-
-function saveProcessEntry(profileId, companyName, patch) {
-  if (typeof companyName !== 'string' || !companyName) return false;
-  const store = readProcessStore(profileId);
-  const cur = store.entries[companyName] || {};
-  const next = { ...cur };
-  if (patch && typeof patch === 'object') {
-    if (typeof patch.status === 'string' && PROCESS_STATUSES.includes(patch.status)) {
-      next.status = patch.status;
-    }
-    if (patch.step !== undefined && patch.step !== null) {
-      const n = Number(patch.step);
-      if (isFinite(n) && n >= 0) next.step = Math.floor(n);
-    }
-  }
-  next.updatedAt = Date.now();
-  store.entries[companyName] = normalizeProcessEntry(companyName, next);
-  return writeProcessStore(profileId, store);
+function syncProcesses(profileId, saveFolder) {
+  return loadProcesses(profileId, saveFolder);
 }
 
 function readJdFile(filePath) {
@@ -456,6 +449,360 @@ function readResumeFile(filePath) {
   }
 }
 
+function openFolder(folderPath) {
+  if (typeof folderPath !== 'string' || !folderPath) {
+    return { error: 'Invalid path' };
+  }
+  try {
+    if (!fs.existsSync(folderPath)) {
+      return { error: 'Folder not found' };
+    }
+    if (!fs.statSync(folderPath).isDirectory()) {
+      return { error: 'Not a folder' };
+    }
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err) };
+  }
+  const openErr = shell.openPath(folderPath);
+  return openErr ? { error: openErr } : { ok: true };
+}
+
+function localDateKey(ms) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseDateKey(str) {
+  if (typeof str !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const test = new Date(y, mo - 1, d);
+  if (test.getFullYear() !== y || test.getMonth() !== mo - 1 || test.getDate() !== d) {
+    return null;
+  }
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+function filterProcessesByDate(saveFolder, dateKey) {
+  return scanSaveFolder(saveFolder).filter((p) => localDateKey(p.date) === dateKey);
+}
+
+function isIgnoredImportDir(name) {
+  return !name || name === '__MACOSX' || name.startsWith('.');
+}
+
+function nameSlugPart(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+/** Build `firstname-lastname-YYYY-MM-DD` (no extension). */
+function buildApplicationsZipBaseName(firstName, lastName, dateKey) {
+  const first = nameSlugPart(firstName);
+  const last = nameSlugPart(lastName);
+  if (!first || !last) return null;
+  return `${first}-${last}-${dateKey}`;
+}
+
+function dateKeyFromZipPath(zipPath) {
+  const base = path.basename(zipPath, path.extname(zipPath));
+  const dated = /-(\d{4}-\d{2}-\d{2})$/i.exec(base);
+  if (dated) {
+    const key = parseDateKey(dated[1]);
+    if (key) return key;
+  }
+  const legacy = /^applications-(\d{4}-\d{2}-\d{2})$/i.exec(base);
+  if (legacy) return parseDateKey(legacy[1]);
+  return null;
+}
+
+async function exportProcessesZip(parentWin, saveFolder, dateKeyRaw, firstName, lastName) {
+  if (!saveFolder || typeof saveFolder !== 'string') {
+    return { error: 'No save folder configured.', code: 'NO_SAVE_FOLDER' };
+  }
+  if (!fs.existsSync(saveFolder)) {
+    return { error: 'Save folder does not exist.', code: 'SAVE_FOLDER_MISSING' };
+  }
+  const dateKey = parseDateKey(dateKeyRaw);
+  if (!dateKey) {
+    return { error: 'Invalid date. Use YYYY-MM-DD.', code: 'INVALID_DATE' };
+  }
+
+  const companies = filterProcessesByDate(saveFolder, dateKey);
+  if (companies.length === 0) {
+    return {
+      error: `No applications found for ${dateKey}.`,
+      code: 'EMPTY',
+    };
+  }
+
+  const zipBaseName = buildApplicationsZipBaseName(firstName, lastName, dateKey);
+  if (!zipBaseName) {
+    return {
+      error: 'Set first and last name on this profile before exporting.',
+      code: 'NO_PROFILE_NAME',
+    };
+  }
+
+  const result = await dialog.showSaveDialog(parentWin || null, {
+    title: 'Export applications',
+    defaultPath: `${zipBaseName}.zip`,
+    filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+
+  try {
+    const zip = new AdmZip();
+    const manifest = {
+      $schema: PROCESS_EXPORT_SCHEMA,
+      version: PROCESS_EXPORT_VERSION,
+      exportDate: dateKey,
+      exportedAt: new Date().toISOString(),
+      firstName: nameSlugPart(firstName),
+      lastName: nameSlugPart(lastName),
+      fileName: `${zipBaseName}.zip`,
+      companies: companies.map((p) => ({
+        name: p.companyName,
+        date: localDateKey(p.date),
+      })),
+    };
+
+    for (const p of companies) {
+      zip.addLocalFolder(p.folderPath, p.companyName);
+    }
+    zip.addFile(
+      'manifest.json',
+      Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8')
+    );
+    zip.writeZip(result.filePath);
+
+    return {
+      ok: true,
+      path: result.filePath,
+      count: companies.length,
+      date: dateKey,
+    };
+  } catch (err) {
+    return {
+      error: err && err.message ? err.message : String(err),
+      code: 'WRITE_FAILED',
+    };
+  }
+}
+
+async function pickImportZipFile(parentWin) {
+  const result = await dialog.showOpenDialog(parentWin || null, {
+    title: 'Choose applications ZIP',
+    filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return { canceled: true };
+  }
+  return { ok: true, path: result.filePaths[0] };
+}
+
+function resolveImportDateKey(zipPath, manifest) {
+  if (manifest && manifest.exportDate) {
+    const fromManifest = parseDateKey(manifest.exportDate);
+    if (fromManifest) return fromManifest;
+  }
+  return dateKeyFromZipPath(zipPath);
+}
+
+function readImportZipContents(saveFolder, zipPath) {
+  if (!saveFolder || typeof saveFolder !== 'string') {
+    return { error: 'No save folder configured.', code: 'NO_SAVE_FOLDER' };
+  }
+  if (!fs.existsSync(saveFolder)) {
+    return { error: 'Save folder does not exist.', code: 'SAVE_FOLDER_MISSING' };
+  }
+  if (typeof zipPath !== 'string' || !zipPath || !fs.existsSync(zipPath)) {
+    return { error: 'ZIP file not found.', code: 'NOT_FOUND' };
+  }
+
+  let tmpDir = null;
+  try {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rm-import-'));
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(tmpDir, true);
+
+    let manifest = null;
+    const manifestPath = path.join(tmpDir, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      try {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      } catch (_) {
+        manifest = null;
+      }
+    }
+
+    const dateKey = resolveImportDateKey(zipPath, manifest);
+    if (!dateKey) {
+      return {
+        error:
+          'Could not determine the archive date. Name the file firstname-lastname-YYYY-MM-DD.zip ' +
+          'or use a ZIP exported from Resume Manager.',
+        code: 'NO_DATE',
+      };
+    }
+
+    const allowedNames = new Set();
+    if (manifest && Array.isArray(manifest.companies)) {
+      for (const c of manifest.companies) {
+        if (!c || typeof c.name !== 'string') continue;
+        if (c.date && c.date !== dateKey) continue;
+        allowedNames.add(c.name);
+      }
+    }
+
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    const companyDirs = entries
+      .filter((e) => e.isDirectory() && !isIgnoredImportDir(e.name))
+      .map((e) => e.name)
+      .filter((name) => allowedNames.size === 0 || allowedNames.has(name));
+
+    if (companyDirs.length === 0) {
+      return {
+        error: `No company folders found in the archive for ${dateKey}.`,
+        code: 'EMPTY_ARCHIVE',
+      };
+    }
+
+    const companies = [];
+    const newItems = [];
+
+    for (const name of companyDirs) {
+      const safeName = safePathSegment(name);
+      const srcPath = path.join(tmpDir, name);
+
+      if (!safeName) {
+        companies.push({ name, status: 'duplicate', reason: 'invalid name' });
+        continue;
+      }
+      if (!isPathInside(tmpDir, srcPath)) {
+        companies.push({ name: safeName, status: 'duplicate', reason: 'invalid path' });
+        continue;
+      }
+
+      const existing = findExistingCompanyFolder(saveFolder, safeName);
+      const dupInBatch = newItems.find((t) => companyNamesAreDuplicate(t.name, safeName));
+
+      if (existing || dupInBatch) {
+        companies.push({
+          name: safeName,
+          status: 'duplicate',
+          existingName: existing ? path.basename(existing) : dupInBatch.name,
+          srcPath,
+        });
+        continue;
+      }
+
+      newItems.push({ name: safeName, srcPath });
+      companies.push({ name: safeName, status: 'new', srcPath });
+    }
+
+    return {
+      ok: true,
+      date: dateKey,
+      fileName: path.basename(zipPath),
+      companies,
+      newCount: newItems.length,
+      duplicateCount: companies.filter((c) => c.status === 'duplicate').length,
+      newItems,
+      tmpDir,
+    };
+  } catch (err) {
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    }
+    return {
+      error: err && err.message ? err.message : String(err),
+      code: 'READ_FAILED',
+    };
+  }
+}
+
+function cleanupImportTemp(tmpDir) {
+  if (!tmpDir) return;
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+}
+
+function analyzeZipForImport(saveFolder, zipPath) {
+  const result = readImportZipContents(saveFolder, zipPath);
+  if (result.error) return result;
+  cleanupImportTemp(result.tmpDir);
+  return {
+    ok: true,
+    date: result.date,
+    fileName: result.fileName,
+    zipPath,
+    companies: result.companies,
+    newCount: result.newCount,
+    duplicateCount: result.duplicateCount,
+  };
+}
+
+function importProcessesZip(saveFolder, zipPath, importNames) {
+  const result = readImportZipContents(saveFolder, zipPath);
+  if (result.error) return result;
+
+  const { tmpDir, date, companies } = result;
+  const srcByName = new Map();
+  for (const c of companies) {
+    if (c.srcPath && c.name) srcByName.set(c.name, c.srcPath);
+  }
+
+  const selectedNames = Array.isArray(importNames)
+    ? importNames.filter((n) => typeof n === 'string' && n)
+    : companies.filter((c) => c.status === 'new').map((c) => c.name);
+
+  const skipped = companies.length - selectedNames.length;
+
+  try {
+    let imported = 0;
+    const importedNames = [];
+    for (const name of selectedNames) {
+      const srcPath = srcByName.get(name);
+      if (!srcPath) continue;
+      const destPath = path.join(saveFolder, name);
+      if (!isPathInside(saveFolder, destPath)) continue;
+      if (fs.existsSync(destPath)) continue;
+      fs.cpSync(srcPath, destPath, { recursive: true });
+      imported += 1;
+      importedNames.push(name);
+    }
+
+    return {
+      ok: true,
+      imported,
+      skipped,
+      importedNames,
+      date,
+    };
+  } catch (err) {
+    return {
+      error: err && err.message ? err.message : String(err),
+      code: 'IMPORT_FAILED',
+    };
+  } finally {
+    cleanupImportTemp(tmpDir);
+  }
+}
+
 /**
  * Confirm `child` resolves to a path that is strictly inside `parent`.
  * Used to prevent rename/delete from escaping the configured save folder.
@@ -465,50 +812,44 @@ function isPathInside(parent, child) {
   return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-function deleteProcessFolder(profileId, saveFolder, companyName) {
+function deleteProcessFolder(profileId, saveFolder, relativePath) {
   if (!saveFolder || typeof saveFolder !== 'string') {
     return { error: 'No save folder configured.', code: 'NO_SAVE_FOLDER' };
   }
-  if (!companyName || typeof companyName !== 'string') {
-    return { error: 'Invalid company name.', code: 'INVALID_NAME' };
+  if (!relativePath || typeof relativePath !== 'string') {
+    return { error: 'Invalid folder path.', code: 'INVALID_PATH' };
   }
-  const folderPath = path.join(saveFolder, companyName);
-  if (!isPathInside(saveFolder, folderPath)) {
+  const folderPath = resolveRelativePath(saveFolder, relativePath);
+  if (!folderPath) {
     return { error: 'Refused to delete a path outside the save folder.', code: 'INVALID_PATH' };
   }
   if (!fs.existsSync(folderPath)) {
-    // Folder is already gone - still scrub the persisted state so the
-    // table no longer shows a stale entry.
-    const store = readProcessStore(profileId);
-    if (Object.prototype.hasOwnProperty.call(store.entries, companyName)) {
-      delete store.entries[companyName];
-      writeProcessStore(profileId, store);
-    }
     return { ok: true, alreadyGone: true };
   }
   try {
     fs.rmSync(folderPath, { recursive: true, force: true });
+    removeEmptyParentDirs(path.dirname(folderPath), saveFolder);
   } catch (err) {
     return {
       error: err && err.message ? err.message : String(err),
       code: 'DELETE_FAILED',
     };
   }
-  const store = readProcessStore(profileId);
-  if (Object.prototype.hasOwnProperty.call(store.entries, companyName)) {
-    delete store.entries[companyName];
-    writeProcessStore(profileId, store);
-  }
   return { ok: true };
 }
 
-function renameProcessFolder(profileId, saveFolder, oldName, newNameRaw) {
+function renameProcessFolder(profileId, saveFolder, relativePath, newNameRaw) {
   if (!saveFolder || typeof saveFolder !== 'string') {
     return { error: 'No save folder configured.', code: 'NO_SAVE_FOLDER' };
   }
-  if (!oldName || typeof oldName !== 'string') {
-    return { error: 'Invalid current name.', code: 'INVALID_NAME' };
+  if (!relativePath || typeof relativePath !== 'string') {
+    return { error: 'Invalid folder path.', code: 'INVALID_PATH' };
   }
+  const oldPath = resolveRelativePath(saveFolder, relativePath);
+  if (!oldPath) {
+    return { error: 'Refused to rename outside the save folder.', code: 'INVALID_PATH' };
+  }
+  const oldName = path.basename(oldPath);
   const newName = safePathSegment(newNameRaw);
   if (!newName) {
     return { error: 'New name is empty or invalid.', code: 'EMPTY_NAME' };
@@ -516,14 +857,15 @@ function renameProcessFolder(profileId, saveFolder, oldName, newNameRaw) {
   if (newName === oldName) {
     return {
       ok: true,
-      path: path.join(saveFolder, oldName),
+      path: oldPath,
       name: oldName,
+      relativePath: toRelativePath(saveFolder, oldPath),
       unchanged: true,
     };
   }
 
-  const oldPath = path.join(saveFolder, oldName);
-  const newPath = path.join(saveFolder, newName);
+  const parentDir = path.dirname(oldPath);
+  const newPath = path.join(parentDir, newName);
   if (!isPathInside(saveFolder, oldPath) || !isPathInside(saveFolder, newPath)) {
     return { error: 'Refused to rename outside the save folder.', code: 'INVALID_PATH' };
   }
@@ -531,13 +873,20 @@ function renameProcessFolder(profileId, saveFolder, oldName, newNameRaw) {
   if (!fs.existsSync(oldPath)) {
     return { error: 'Original folder no longer exists.', code: 'NOT_FOUND' };
   }
-  // Treat name conflict case-sensitively (case-only renames are still allowed
-  // because some filesystems treat them as the same and renameSync handles it).
-  if (newName !== oldName && fs.existsSync(newPath)) {
+  if (fs.existsSync(newPath)) {
     return {
-      error: `A folder named "${newName}" already exists in this location.`,
+      error: duplicateCompanyMessage(newName, newPath),
       code: 'DUPLICATE',
       path: newPath,
+    };
+  }
+
+  const conflicting = findExistingCompanyFolder(saveFolder, newName, oldPath);
+  if (conflicting) {
+    return {
+      error: duplicateCompanyMessage(newName, conflicting),
+      code: 'DUPLICATE',
+      path: conflicting,
     };
   }
 
@@ -550,19 +899,9 @@ function renameProcessFolder(profileId, saveFolder, oldName, newNameRaw) {
     };
   }
 
-  // Move the store entry to the new key and repoint its stored file paths,
-  // which embed the (now renamed) folder name.
-  const store = readProcessStore(profileId);
-  const prev = store.entries[oldName];
-  if (prev) {
-    const moved = { ...prev, companyName: newName, updatedAt: Date.now() };
-    if (prev.pdfPath) moved.pdfPath = path.join(newPath, path.basename(prev.pdfPath));
-    if (prev.jdPath) moved.jdPath = path.join(newPath, path.basename(prev.jdPath));
-    delete store.entries[oldName];
-    store.entries[newName] = normalizeProcessEntry(newName, moved);
-    writeProcessStore(profileId, store);
-  }
-  return { ok: true, path: newPath, name: newName };
+  const newRelativePath = toRelativePath(saveFolder, newPath);
+
+  return { ok: true, path: newPath, name: newName, relativePath: newRelativePath };
 }
 
 /**
@@ -626,10 +965,7 @@ function safePathSegment(name) {
 
 /**
  * Render `html` to a PDF and save it under
- * `{saveFolder}/{companyName}/{fileName}`. The company subfolder must NOT
- * already exist - if it does we surface a `DUPLICATE_FOLDER` error so the
- * renderer can show a clear warning. All errors are returned as
- * `{ error, code? }` rather than thrown.
+ * `{saveFolder}/{companyName}/{fileName}`.
  */
 async function exportPdf(args) {
   const html = (args && typeof args.html === 'string') ? args.html : '';
@@ -674,11 +1010,12 @@ async function exportPdf(args) {
   if (fileName === '.pdf') fileName = 'resume.pdf';
 
   const companyFolder = path.join(saveFolder, company);
-  if (fs.existsSync(companyFolder)) {
+  const existingCompanyFolder = findExistingCompanyFolder(saveFolder, company);
+  if (existingCompanyFolder) {
     return {
-      error: `A folder named "${company}" already exists in this location. Rename it or choose a different company name.`,
+      error: duplicateCompanyMessage(company, existingCompanyFolder),
       code: 'DUPLICATE_FOLDER',
-      path: companyFolder,
+      path: existingCompanyFolder,
     };
   }
 
@@ -731,24 +1068,9 @@ async function exportPdf(args) {
       }
     }
 
-    // Keep the process list in sync without re-scanning the folder: record
-    // this freshly-created application directly in the persisted store.
-    if (profileId) {
-      try {
-        addProcessEntry(profileId, company, {
-          date: Date.now(),
-          pdfPath: outPath,
-          jdPath,
-        });
-      } catch (storeErr) {
-        console.error('Failed to record process entry:', storeErr);
-      }
-    }
-
     return { path: outPath, folder: companyFolder, jdPath, jdError: jdError || undefined };
   } catch (err) {
     console.error('exportPdf failed:', err);
-    // Clean up the empty folder we just created so the user can retry.
     if (folderCreated) {
       try {
         const entries = fs.readdirSync(companyFolder);
@@ -837,12 +1159,6 @@ function gatherBackup() {
   const prompts = readDirToMap(getPromptsDir(), '.txt');
   const jds = readDirToMap(getJdsDir(), '.txt');
 
-  const processesText = readDirToMap(getProcessesDir(), '.json');
-  const processes = {};
-  for (const [id, raw] of Object.entries(processesText)) {
-    try { processes[id] = JSON.parse(raw); } catch (_) { /* skip corrupt */ }
-  }
-
   return {
     $schema: BACKUP_SCHEMA,
     version: BACKUP_VERSION,
@@ -852,7 +1168,8 @@ function gatherBackup() {
     resumes,
     prompts,
     jds,
-    processes,
+    // Manage process / company applications live in each profile's save
+    // folder on disk — not included in backup.
     // `styles` is a renderer-side concept (localStorage) - the renderer
     // injects it before sending the payload to `backup:save`.
   };
@@ -878,9 +1195,8 @@ function validateBackup(payload) {
 }
 
 /**
- * Wipe-and-restore. Replaces all per-profile files (resumes, prompts,
- * processes) and `profiles.json`. Returns counts so the caller can show
- * a summary toast.
+ * Wipe-and-restore. Replaces per-profile app data and `profiles.json`.
+ * Company applications are read from each profile's save folder, not restored here.
  */
 function applyBackup(payload) {
   const validation = validateBackup(payload);
@@ -888,7 +1204,7 @@ function applyBackup(payload) {
     return { error: validation.error, code: 'INVALID_BACKUP' };
   }
 
-  const counts = { profiles: 0, resumes: 0, prompts: 0, jds: 0, processes: 0 };
+  const counts = { profiles: 0, resumes: 0, prompts: 0, jds: 0 };
 
   try {
     fs.mkdirSync(path.dirname(getProfilesPath()), { recursive: true });
@@ -899,12 +1215,10 @@ function applyBackup(payload) {
     );
     counts.profiles = payload.profiles.length;
 
-    // Wipe and re-create each per-profile dir so removed profiles disappear.
     for (const [dir, ext, dataKey, mode] of [
       [getResumesDir(), '.json', 'resumes', 'json'],
       [getPromptsDir(), '.txt', 'prompts', 'text'],
       [getJdsDir(), '.txt', 'jds', 'text'],
-      [getProcessesDir(), '.json', 'processes', 'json'],
     ]) {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
       fs.mkdirSync(dir, { recursive: true });
@@ -926,6 +1240,9 @@ function applyBackup(payload) {
         }
       }
     }
+
+    // Drop legacy local process metadata; Manage reads the save folder instead.
+    try { fs.rmSync(getProcessesDir(), { recursive: true, force: true }); } catch (_) { /* ignore */ }
   } catch (err) {
     return {
       error: err && err.message ? err.message : String(err),
@@ -1063,8 +1380,8 @@ app.whenReady().then(() => {
   ipcMain.handle('process:sync', (_event, profileId, saveFolder) =>
     syncProcesses(profileId, saveFolder)
   );
-  ipcMain.handle('process:save', (_event, profileId, companyName, patch) =>
-    saveProcessEntry(profileId, companyName, patch)
+  ipcMain.handle('process:checkDuplicate', (_event, saveFolder, companyName, exceptPath) =>
+    checkCompanyDuplicate(saveFolder, companyName, exceptPath)
   );
   ipcMain.handle('process:delete', (_event, profileId) =>
     deleteProcessesData(profileId)
@@ -1073,11 +1390,28 @@ app.whenReady().then(() => {
   ipcMain.handle('process:readResume', (_event, filePath) =>
     readResumeFile(filePath)
   );
-  ipcMain.handle('process:rename', (_event, profileId, saveFolder, oldName, newName) =>
-    renameProcessFolder(profileId, saveFolder, oldName, newName)
+  ipcMain.handle('process:openFolder', (_event, folderPath) =>
+    openFolder(folderPath)
   );
-  ipcMain.handle('process:deleteFolder', (_event, profileId, saveFolder, companyName) =>
-    deleteProcessFolder(profileId, saveFolder, companyName)
+  ipcMain.handle('process:rename', (_event, profileId, saveFolder, relativePath, newName) =>
+    renameProcessFolder(profileId, saveFolder, relativePath, newName)
+  );
+  ipcMain.handle('process:deleteFolder', (_event, profileId, saveFolder, relativePath) =>
+    deleteProcessFolder(profileId, saveFolder, relativePath)
+  );
+  ipcMain.handle('process:exportZip', async (event, saveFolder, dateKey, firstName, lastName) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    return exportProcessesZip(parent, saveFolder, dateKey, firstName, lastName);
+  });
+  ipcMain.handle('process:pickImportZip', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    return pickImportZipFile(parent);
+  });
+  ipcMain.handle('process:analyzeImportZip', (_event, saveFolder, zipPath) =>
+    analyzeZipForImport(saveFolder, zipPath)
+  );
+  ipcMain.handle('process:importZip', (_event, saveFolder, zipPath, importNames) =>
+    importProcessesZip(saveFolder, zipPath, importNames)
   );
 
   ipcMain.handle('backup:gather', () => gatherBackup());
