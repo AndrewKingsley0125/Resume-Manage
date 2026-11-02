@@ -3,6 +3,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const AdmZip = require('adm-zip');
+const { buildDocx } = require('./docx');
+const Resume = require('../shared/resume');
+const { buildPrompt } = require('./prompt');
 
 const PROFILES_FILE = 'profiles.json';
 const RESUMES_DIR = 'resumes';
@@ -224,97 +227,29 @@ function processRowFromDisk(companyName, relativePath, disk, folderPath) {
   };
 }
 
-function normalizeCompanyKey(name) {
-  return String(name || '')
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function levenshtein(a, b) {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev = new Array(n + 1);
-  let cur = new Array(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    cur[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-    }
-    const swap = prev;
-    prev = cur;
-    cur = swap;
-  }
-  return prev[n];
-}
-
-const COMPANY_DUPLICATE_MAX_EDITS = 2;
-const COMPANY_DUPLICATE_MIN_FUZZY_LEN = 3;
-
-/**
- * Compare company names for export/rename duplicate detection:
- * 1. Normalize: lowercase, strip spaces/punctuation/special chars.
- * 2. Exact match on normalized form.
- * 3. Otherwise allow up to two character edits (missing/extra/swapped letters).
- */
-function companyNamesAreDuplicate(candidate, existing) {
-  const a = normalizeCompanyKey(candidate);
-  const b = normalizeCompanyKey(existing);
-  if (!a || !b) return false;
-  if (a === b) return true;
-  const minLen = Math.min(a.length, b.length);
-  const maxLen = Math.max(a.length, b.length);
-  if (minLen < COMPANY_DUPLICATE_MIN_FUZZY_LEN) return false;
-  if (maxLen - minLen > COMPANY_DUPLICATE_MAX_EDITS) return false;
-  return levenshtein(a, b) <= COMPANY_DUPLICATE_MAX_EDITS;
-}
-
-function* iterateCompanyFolders(saveFolder) {
-  if (!saveFolder || !fs.existsSync(saveFolder)) return;
-  let entries;
-  try {
-    entries = fs.readdirSync(saveFolder, { withFileTypes: true });
-  } catch (_) {
-    return;
-  }
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    yield { name: e.name, path: path.join(saveFolder, e.name) };
-  }
-}
-
 function findExistingCompanyFolder(saveFolder, companyName, exceptPath = null) {
   if (!saveFolder || !companyName) return null;
-  const exceptResolved = exceptPath ? path.resolve(exceptPath) : null;
-  for (const entry of iterateCompanyFolders(saveFolder)) {
-    if (exceptResolved && path.resolve(entry.path) === exceptResolved) continue;
-    if (companyNamesAreDuplicate(companyName, entry.name)) return entry.path;
+  const folderPath = path.join(saveFolder, companyName);
+  if (!fs.existsSync(folderPath)) return null;
+  try {
+    if (!fs.statSync(folderPath).isDirectory()) return null;
+  } catch (_) {
+    return null;
   }
-  return null;
+  const exceptResolved = exceptPath ? path.resolve(exceptPath) : null;
+  if (exceptResolved && path.resolve(folderPath) === exceptResolved) return null;
+  return folderPath;
 }
 
-function duplicateCompanyMessage(candidate, existingPath) {
+function duplicateCompanyMessage(_candidate, existingPath) {
   const existingName = path.basename(existingPath);
-  if (companyNamesAreDuplicate(candidate, existingName) &&
-      normalizeCompanyKey(candidate) === normalizeCompanyKey(existingName)) {
-    return (
-      `A folder named "${existingName}" already exists in this save folder. ` +
-      'Rename it or choose a different company name.'
-    );
-  }
   return (
-    `A folder named "${existingName}" already exists and matches "${candidate}" ` +
-    '(ignoring spaces, punctuation, or up to two letter differences). ' +
-    'Rename the existing folder or choose a different company name.'
+    `A folder named "${existingName}" already exists in this save folder. ` +
+    'Rename it or choose a different company name.'
   );
 }
 
-/** Check save folder for a fuzzy duplicate before export or rename. */
+/** Check save folder for an existing company folder with the same name. */
 function checkCompanyDuplicate(saveFolder, companyNameRaw, exceptPath = null) {
   const company = safePathSegment(companyNameRaw);
   if (!company) {
@@ -699,7 +634,7 @@ function readImportZipContents(saveFolder, zipPath) {
       }
 
       const existing = findExistingCompanyFolder(saveFolder, safeName);
-      const dupInBatch = newItems.find((t) => companyNamesAreDuplicate(t.name, safeName));
+      const dupInBatch = newItems.find((t) => t.name === safeName);
 
       if (existing || dupInBatch) {
         companies.push({
@@ -936,7 +871,7 @@ async function renderPdfBuffer(html) {
 
     const pdfBuffer = await win.webContents.printToPDF({
       printBackground: true,
-      pageSize: 'Letter',
+      pageSize: 'A4',
       margins: { top: 0, bottom: 0, left: 0, right: 0 },
     });
 
@@ -976,6 +911,15 @@ async function exportPdf(args) {
   const fileNameRaw = (args && typeof args.fileName === 'string') ? args.fileName : 'resume.pdf';
   const jd = (args && typeof args.jd === 'string') ? args.jd : '';
   const profileId = (args && typeof args.profileId === 'string') ? args.profileId : '';
+  const profile = readProfiles().find(p => p.id === profileId);
+  if (!profile) return { error: 'Profile not found.', code: 'INVALID_PROFILE' };
+  let docxBuffer;
+  try {
+    Resume.validate(args.resumeData, profile);
+    docxBuffer = buildDocx(profile, args.resumeData, args.style);
+  } catch (err) {
+    return { error: err.message, code: 'INVALID_RESUME' };
+  }
 
   if (!saveFolder) {
     return {
@@ -1046,11 +990,13 @@ async function exportPdf(args) {
 
     const pdfBuffer = await win.webContents.printToPDF({
       printBackground: true,
-      pageSize: 'Letter',
+      pageSize: 'A4',
       margins: { top: 0, bottom: 0, left: 0, right: 0 },
     });
 
     const outPath = path.join(companyFolder, fileName);
+    const docxPath = path.join(companyFolder, fileName.replace(/\.pdf$/i, '.docx'));
+    fs.writeFileSync(docxPath, docxBuffer);
     fs.writeFileSync(outPath, pdfBuffer);
 
     let jdPath = null;
@@ -1068,11 +1014,15 @@ async function exportPdf(args) {
       }
     }
 
-    return { path: outPath, folder: companyFolder, jdPath, jdError: jdError || undefined };
+    return { path: outPath, docxPath, folder: companyFolder, jdPath, jdError: jdError || undefined };
   } catch (err) {
     console.error('exportPdf failed:', err);
     if (folderCreated) {
       try {
+        for (const name of [fileName, fileName.replace(/\.pdf$/i, '.docx')]) {
+          const partial = path.join(companyFolder, name);
+          if (fs.existsSync(partial)) fs.unlinkSync(partial);
+        }
         const entries = fs.readdirSync(companyFolder);
         if (entries.length === 0) fs.rmdirSync(companyFolder);
       } catch (_) { /* ignore cleanup failure */ }
@@ -1313,6 +1263,8 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0f1115',
     title: 'Resume Manager',
+    // Window/taskbar icon when running unpackaged; the built .exe uses build/icon.ico.
+    icon: path.join(__dirname, '../icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1326,6 +1278,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ipcMain.handle('prompt:generate', (_event, profileId) => {
+    const profile = readProfiles().find(p => p.id === profileId);
+    if (!profile) throw new Error('Profile not found');
+    return buildPrompt(profile);
+  });
   ipcMain.handle('profiles:list', () => readProfiles());
 
   ipcMain.handle('profiles:save', (_event, profiles) => {
@@ -1335,9 +1292,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle('resume:get', (_event, profileId) => readResume(profileId));
 
-  ipcMain.handle('resume:save', (_event, profileId, data) =>
-    writeResume(profileId, data)
-  );
+  ipcMain.handle('resume:save', (_event, profileId, data) => {
+    const profile = readProfiles().find(p => p.id === profileId);
+    if (!profile) return false;
+    try { Resume.validate(data, profile); }
+    catch (err) { console.error('Invalid resume:', err.message); return false; }
+    return writeResume(profileId, data);
+  });
 
   ipcMain.handle('resume:delete', (_event, profileId) => deleteResume(profileId));
 

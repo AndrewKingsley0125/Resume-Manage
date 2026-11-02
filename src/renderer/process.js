@@ -414,7 +414,7 @@
       nameTd.className = 'col-import-company';
       let label = c.name;
       if (c.status === 'duplicate' && c.existingName && c.existingName !== c.name) {
-        label += ` (matches "${c.existingName}")`;
+        label += ` (folder "${c.existingName}" exists)`;
       }
       nameTd.textContent = label;
       tr.appendChild(nameTd);

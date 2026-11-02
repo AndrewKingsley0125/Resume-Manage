@@ -16,6 +16,7 @@
   let promptSaveTimer = null;
   let jdSaveTimer = null;
   let toastTimer = null;
+  let workspaceToken = 0;
 
   // PDF preview state
   let currentPdfUrl = null;
@@ -30,7 +31,7 @@
   }
 
   function currentTemplateId() {
-    return (currentProfile && currentProfile.templateId) || 'modern';
+    return (currentProfile && currentProfile.templateId) || 'classic';
   }
 
   function currentTemplate() {
@@ -207,7 +208,7 @@
     if (subEl) {
       const sub = [];
       if (currentProfile.title) sub.push(currentProfile.title);
-      const tpl = window.App.Templates.get(currentProfile.templateId || 'modern');
+      const tpl = window.App.Templates.get(currentProfile.templateId || 'classic');
       if (tpl) sub.push(`Template: ${tpl.name}`);
       subEl.textContent = sub.join(' \u00B7 ');
     }
@@ -260,10 +261,9 @@
       out.push(detailGridSection('Online', online, { rawHtml: true }));
     }
 
-    const tpl = window.App.Templates.get(p.templateId || 'modern');
+    const tpl = window.App.Templates.get(p.templateId || 'classic');
     const settings = [
       ['Title', p.title],
-      ['Role-based work', p.roleBasedWork ? 'Yes' : 'No'],
       ['Template', tpl ? tpl.name : 'Modern'],
       ['Save folder', p.saveFolder],
     ].filter(([, v]) => v != null && String(v).trim() !== '');
@@ -278,7 +278,7 @@
           const heading = titleParts.length
             ? titleParts.join(' \u00B7 ')
             : '<span class="detail-empty">(empty entry)</span>';
-          const meta = [it.period, it.location].filter(Boolean).map(escHtml).join(' \u00B7 ');
+          const meta = [it.period, it.location, it.workType, it.workArrangement].filter(Boolean).map(escHtml).join(' \u00B7 ');
           const bullets = (typeof it.bulletsCount === 'number' && it.bulletsCount >= 0)
             ? `${it.bulletsCount} bullet${it.bulletsCount === 1 ? '' : 's'}`
             : 'all bullets from JSON';
@@ -625,6 +625,8 @@
    */
   async function open(profile) {
     init();
+    if (currentProfile) close();
+    const token = ++workspaceToken;
     currentProfile = profile;
     populateProfileHeader(profile);
 
@@ -634,8 +636,9 @@
     } catch (err) {
       console.error('getResume failed', err);
     }
+    if (token !== workspaceToken) return;
     currentResume =
-      saved && typeof saved === 'object' ? saved : seedResume();
+      window.App.Resume.migrate(saved, profile);
 
     $('resume-json').value = JSON.stringify(currentResume, null, 2);
     $('json-error').classList.add('hidden');
@@ -647,6 +650,7 @@
     } catch (err) {
       console.error('getPrompt failed', err);
     }
+    if (token !== workspaceToken) return;
     $('resume-prompt').value = typeof savedPrompt === 'string' ? savedPrompt : '';
     setPromptStatus('');
 
@@ -656,6 +660,7 @@
     } catch (err) {
       console.error('getJd failed', err);
     }
+    if (token !== workspaceToken) return;
     const jdEl = $('resume-jd');
     if (jdEl) jdEl.value = typeof savedJd === 'string' ? savedJd : '';
     setJdStatus('');
@@ -668,6 +673,8 @@
   }
 
   function close() {
+    flushPendingEdits();
+    workspaceToken++;
     currentProfile = null;
     currentResume = null;
     clearTimeout(parseTimer);
@@ -686,6 +693,22 @@
     closeProfileDetail();
   }
 
+  function flushPendingEdits() {
+    if (!currentProfile) return;
+    const profile = currentProfile;
+    const save = (promise) => Promise.resolve(promise).then(ok => {
+      if (ok === false) throw new Error('Could not save pending edits');
+    }).catch(err => console.error('Pending save failed', err));
+    if (parseTimer || saveTimer) {
+      try { save(window.api.saveResume(profile.id, window.App.Resume.parse($('resume-json').value, profile))); }
+      catch (_) { /* Invalid drafts are never persisted as resumes. */ }
+    }
+    if (promptSaveTimer) save(window.api.savePrompt(profile.id, $('resume-prompt').value));
+    if (jdSaveTimer) save(window.api.saveJd(profile.id, $('resume-jd').value));
+    for (const timer of [parseTimer, saveTimer, promptSaveTimer, jdSaveTimer]) clearTimeout(timer);
+    parseTimer = saveTimer = promptSaveTimer = jdSaveTimer = null;
+  }
+
   function populateProfileHeader(profile) {
     const avatar = $('ws-avatar');
     avatar.style.backgroundColor = profile.color || '#6c8cff';
@@ -696,7 +719,7 @@
     const fullName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
     $('ws-name').textContent = fullName || 'Unnamed profile';
 
-    const tpl = window.App.Templates.get(profile.templateId || 'modern');
+    const tpl = window.App.Templates.get(profile.templateId || 'classic');
     const tplLabel = $('ws-template-label');
     if (tplLabel) tplLabel.textContent = tpl ? tpl.name : 'Modern';
 
@@ -749,24 +772,16 @@
    * Default seed matching the user's authoritative JSON shape.
    */
   function seedResume() {
-    return {
-      company: '',
-      title: '',
-      summary: '',
-      skills: [{ Category1: ['Skill1', 'Skill2'] }],
-      experience: [
-        { title: '', company: '', sentences: ['Sentence 1', 'Sentence 2'] },
-      ],
-      education: [{ degree: 'Degree and Major' }],
-    };
+    return window.App.Resume.seed(currentProfile || {});
   }
 
   function parseAndRender() {
+    parseTimer = null;
     const text = $('resume-json').value;
     const errEl = $('json-error');
     let parsed;
     try {
-      parsed = JSON.parse(text);
+      parsed = window.App.Resume.parse(text, currentProfile);
     } catch (e) {
       errEl.textContent = `JSON error: ${e.message}`;
       errEl.classList.remove('hidden');
@@ -784,10 +799,13 @@
   function persistDebounced() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
+      saveTimer = null;
       if (!currentProfile || !currentResume) return;
+      const profile = currentProfile;
       try {
-        await window.api.saveResume(currentProfile.id, currentResume);
-        setStatus('Saved');
+        const ok = await window.api.saveResume(profile.id, currentResume);
+        if (ok === false) throw new Error('Could not write resume');
+        if (currentProfile === profile) setStatus('Saved');
       } catch (err) {
         console.error('saveResume failed', err);
         setStatus('Save failed');
@@ -796,11 +814,14 @@
   }
 
   async function persistPrompt() {
+    promptSaveTimer = null;
     if (!currentProfile) return;
+    const profile = currentProfile;
     const text = $('resume-prompt').value;
     try {
-      await window.api.savePrompt(currentProfile.id, text);
-      setPromptStatus('Saved');
+      const ok = await window.api.savePrompt(profile.id, text);
+      if (ok === false) throw new Error('Could not write prompt');
+      if (currentProfile === profile) setPromptStatus('Saved');
     } catch (err) {
       console.error('savePrompt failed', err);
       setPromptStatus('Save failed');
@@ -808,12 +829,15 @@
   }
 
   async function persistJd() {
+    jdSaveTimer = null;
     if (!currentProfile) return;
+    const profile = currentProfile;
     const el = $('resume-jd');
     const text = el ? el.value : '';
     try {
-      await window.api.saveJd(currentProfile.id, text);
-      setJdStatus('Saved');
+      const ok = await window.api.saveJd(profile.id, text);
+      if (ok === false) throw new Error('Could not write job description');
+      if (currentProfile === profile) setJdStatus('Saved');
     } catch (err) {
       console.error('saveJd failed', err);
       setJdStatus('Save failed');
@@ -916,447 +940,17 @@
   // textarea (overwriting whatever was there). The auto-save handler picks
   // it up once the textarea fires its `input` event below. The previous
   // prompt is recoverable via the textarea's native undo (Ctrl+Z).
-  function regeneratePrompt() {
+  async function regeneratePrompt() {
     if (!currentProfile) return;
-    const text = generatePromptFromProfile(currentProfile);
+    const profile = currentProfile;
+    let text;
+    try { text = await window.api.generatePrompt(profile.id); }
+    catch (err) { showToast(`Prompt generation failed: ${err.message || err}`, {kind:'error'}); return; }
+    if (currentProfile !== profile) return;
     const ta = $('resume-prompt');
     ta.value = text;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     showToast('Prompt generated from profile');
-  }
-
-  function generatePromptFromProfile(profile) {
-    if (!profile) return '';
-    const roleBased = profile.roleBasedWork === true;
-    const lastCompanyTailor = profile.lastCompanyTailor === true;
-    const profileTitle = (profile.title || '').trim();
-    const wh = Array.isArray(profile.workHistory) ? profile.workHistory : [];
-    const edu = Array.isArray(profile.education) ? profile.education : [];
-    const certs = Array.isArray(profile.certifications)
-      ? profile.certifications
-      : [];
-
-    const DEFAULT_BULLETS = 10;
-    const bulletsFor = (w) =>
-      typeof w.bulletsCount === 'number' && w.bulletsCount > 0
-        ? w.bulletsCount
-        : DEFAULT_BULLETS;
-
-    // ---- Job Title line ----
-    // Prefer the profile's own Title field; otherwise (role-based only),
-    // fall back to listing the unique per-entry work titles.
-    let jobTitleLine = profileTitle;
-    if (!jobTitleLine && roleBased) {
-      const titles = wh.map((w) => (w.title || '').trim()).filter(Boolean);
-      const seen = new Set();
-      const unique = [];
-      for (const t of titles) {
-        const key = t.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          unique.push(t);
-        }
-      }
-      jobTitleLine = unique.join(' | ');
-    }
-
-    // ---- Work Experience list ----
-    const workLines = wh
-      .map((w) => {
-        const company = (w.company || '').trim();
-        const title = (w.title || '').trim();
-        const period = (w.period || '').trim();
-        if (!company && !title && !period) return '';
-        const parts = [];
-        parts.push(company || 'Company');
-        if (roleBased && title) parts.push(title);
-        if (period) parts.push(period);
-        parts.push(`${bulletsFor(w)} Bullet Points`);
-        return `- ${parts.join(', ')}`;
-      })
-      .filter(Boolean);
-
-    // ---- Sentence count rules per company ----
-    const sentenceLines = wh
-      .map((w) => {
-        const company = (w.company || '').trim();
-        if (!company) return '';
-        return `- ${company}: at least ${bulletsFor(w)} sentences`;
-      })
-      .filter(Boolean);
-
-    // ---- Education list ----
-    const eduLines = edu
-      .map((e) => {
-        const degree = (e.degree || '').trim();
-        const institution = (e.institution || '').trim();
-        if (!degree && !institution) return '';
-        if (degree && institution) return `- ${degree}, ${institution}`;
-        return `- ${degree || institution}`;
-      })
-      .filter(Boolean);
-
-    // ---- Certifications list (optional, only if present) ----
-    const certLines = certs
-      .map((c) => {
-        const name = (c.certification || '').trim();
-        const inst = (c.institution || '').trim();
-        if (!name && !inst) return '';
-        if (name && inst) return `- ${name} (${inst})`;
-        return `- ${name || inst}`;
-      })
-      .filter(Boolean);
-
-    // ---- Output JSON structure (differs by role-based mode) ----
-    const outputJson = roleBased
-      ? `{
-  "company": "Company name from the job description",
-  "summary": "",
-  "skills": [
-    { "Category1": ["Skill1", "Skill2", "..."] }
-  ],
-  "experience": [
-    {
-      "company": "",
-      "sentences": [
-        "Sentence 1",
-        "Sentence 2"
-      ]
-    }
-  ],
-  "education": [
-    { "degree": "Degree and Major" }
-  ]
-}`
-      : `{
-  "company": "Company name from the job description",
-  "title": "",
-  "summary": "",
-  "skills": [
-    { "Category1": ["Skill1", "Skill2", "..."] }
-  ],
-  "experience": [
-    {
-      "title": "",
-      "company": "",
-      "sentences": [
-        "Sentence 1",
-        "Sentence 2"
-      ]
-    }
-  ],
-  "education": [
-    { "degree": "Degree and Major" }
-  ]
-}`;
-
-    const SEP = '========================================';
-
-    // ---- Last-company-tailor template ----
-    // The LATEST (most recent) company — first work-history row — is chosen by
-    // the model from a fixed industry list based on the JD.
-    if (lastCompanyTailor) {
-      return buildTailorPrompt({
-        SEP,
-        roleBased,
-        profileTitle,
-        wh,
-        edu,
-        certs,
-        bulletsFor,
-        outputJson,
-      });
-    }
-
-    const lines = [
-      'You are a resume generation engine.',
-      'Your output MUST be exactly ONE valid JSON object inside a single code block.',
-      'Do NOT include explanations, comments, markdown, headers, or text outside the JSON.',
-      'Do NOT generate multiple code blocks.',
-      'Do NOT ask questions.',
-      'If any rule fails, STOP and return a plain text error message instead of JSON.',
-      '',
-      SEP,
-      'CANDIDATE PROFILE',
-      SEP,
-      `Job Title: ${jobTitleLine}`,
-      'Work Experience:',
-      ...(workLines.length ? workLines : ['- (no work history on file)']),
-      'Education:',
-      ...(eduLines.length ? eduLines : ['- (no education on file)']),
-    ];
-
-    if (certLines.length) {
-      lines.push('Certifications:', ...certLines);
-    }
-
-    lines.push(
-      '',
-      SEP,
-      'JOB DESCRIPTION HANDLING RULES',
-      SEP,
-      'If the job requires security clearance, on-site only work, DO NOT generate a resume.',
-      '',
-      SEP,
-      'OUTPUT FORMAT (STRICT)',
-      SEP,
-      'Return ONE JSON object with the following structure:',
-      outputJson,
-      '',
-      SEP,
-      'CONTENT RULES',
-      SEP,
-      'COMPANY NAME',
-      '- Must include the company name from the job description',
-      '- If the company name is not mentioned in the job description, set company name to an empty string',
-      'SUMMARY',
-      '- 3\u20134 sentences',
-      '- Professional, ATS-optimized, concise',
-      '- Aligned directly to the job description',
-      'SKILLS',
-      '- 30\u201335 total skills',
-      '- Categorized',
-      '- Must include technologies from the job description',
-      '- Only include technologies released before the experience period',
-      'EDUCATION MAJOR RULES:',
-      'Only modify the major if it is not related to the job description.',
-      '- Each major should be appropriate for the job description.',
-      '- Each major should be common in the industry.',
-      'EXPERIENCE \u2013 SENTENCE RULES (VERY IMPORTANT)',
-      '- DO NOT include the name or pronouns such as he or she',
-      '- No bullet symbols',
-      '- Each sentence must be 150\u2013250 characters and contain detailed, technically rich descriptions of your role, specific contributions, and technologies used.',
-      '- Each sentence must end with a period',
-      '- No sentence may be vague or generic',
-      '- Each experience must reference company industry relevance and career growth',
-      'SENTENCE COUNT PER COMPANY',
-      ...(sentenceLines.length
-        ? sentenceLines
-        : ['- (no work history on file)']),
-      'Each sentence must be placed as a separate string inside the sentences array.',
-      '',
-      SEP,
-      'FORMATTING RULES',
-      SEP,
-      '- JSON ONLY',
-      '- ONE code block ONLY',
-      '- No markdown outside JSON',
-      '- No comments',
-      '- No trailing commas',
-      '- Valid JSON syntax',
-      '- ATS-safe language only',
-      '',
-      SEP,
-      'FINAL VALIDATION',
-      SEP,
-      'Before responding, verify:',
-      '- All job description technologies are included',
-      '- Sentence length requirements are met',
-      '- Sentence count requirements are met',
-      '- Sentence DO NOT include the name or pronouns such as he or she',
-      '- Job titles are aligned to the role',
-      '- Output is valid JSON',
-      '',
-      SEP,
-      'JOB DESCRIPTION',
-      SEP,
-      ''
-    );
-
-    return lines.join('\n');
-  }
-
-  // Fixed industry -> company mapping the model picks from for the tailored
-  // last company. Kept in one place so it's easy to edit.
-  const LAST_COMPANY_LIST = [
-    'Fintech / Digital Payments - Plaid',
-    'E-commerce / Marketplaces - Miva',
-    'Gaming / Interactive Media - Roblox',
-    'Media / Social Platform - Pinterest',
-    'EdTech / Education Tech - Clever',
-    'Healthcare Tech / Health SaaS - Net Health',
-    'Consulting / Enterprise IT Services - Accenture',
-    'Logistics / Supply Chain - Uber',
-    'Blockchain / Web3 / Crypto - Kraken',
-    'HR Tech / Workforce SaaS - Workday',
-    'IoT / Embedded - Afero',
-    'Music tech - Output',
-    'AdTech / Advertising Technology - AppLovin',
-    'AI / Machine Learning / Data Platform - Databricks',
-    'Software / SaaS (Cloud & Dev Tools) / Data infrastructure / analytics database - ClickHouse',
-  ];
-
-  /**
-   * Build the "last company tailor" prompt. The candidate's latest (most recent)
-   * work entry — the first row in work history — has no company name; the model
-   * selects it from LAST_COMPANY_LIST based on the job description's industry.
-   */
-  function buildTailorPrompt(ctx) {
-    const { SEP, roleBased, profileTitle, wh, edu, certs, outputJson } = ctx;
-    // Latest job = first entry in work history (most recent company).
-    const latestIdx = 0;
-    const bulletsOf = (w) =>
-      typeof w.bulletsCount === 'number' && w.bulletsCount > 0 ? w.bulletsCount : 0;
-
-    // Work experience: the latest (first) entry's name is the model's job.
-    const workLines = wh
-      .map((w, i) => {
-        const isLatest = i === latestIdx;
-        const name = isLatest
-          ? 'Last Company'
-          : ((w.company || '').trim() || 'Company');
-        const period = (w.period || '').trim() || 'N/A';
-        return `- ${name}, ${period}, ${bulletsOf(w)} Bullet Points`;
-      });
-
-    const sentenceLines = wh
-      .map((w, i) => {
-        const n = bulletsOf(w);
-        if (n <= 0) return '';
-        const name = i === latestIdx
-          ? 'Last Company'
-          : (w.company || '').trim();
-        if (!name) return '';
-        return `- ${name}: at least ${n} sentences`;
-      })
-      .filter(Boolean);
-
-    const eduLines = edu
-      .map((e) => {
-        const degree = (e.degree || '').trim();
-        const institution = (e.institution || '').trim();
-        if (!degree && !institution) return '';
-        if (degree && institution) return `- ${degree}, ${institution}`;
-        return `- ${degree || institution}`;
-      })
-      .filter(Boolean);
-
-    const certLines = certs
-      .map((c) => {
-        const name = (c.certification || '').trim();
-        const inst = (c.institution || '').trim();
-        if (!name && !inst) return '';
-        if (name && inst) return `- ${name} (${inst})`;
-        return `- ${name || inst}`;
-      })
-      .filter(Boolean);
-
-    const lines = [
-      'You are a resume generation engine.',
-      'Your output MUST be exactly ONE valid JSON object inside a single code block.',
-      'Do NOT include explanations, comments, markdown, headers, or text outside the JSON.',
-      'Do NOT generate multiple code blocks.',
-      'Do NOT ask questions.',
-      'If any rule fails, STOP and return a plain text error message instead of JSON.',
-      '',
-      SEP,
-      'CANDIDATE PROFILE',
-      SEP,
-      `Seniority Level: ${profileTitle || 'Not specified'}`,
-      'Work Experience:',
-      ...(workLines.length ? workLines : ['- No work experience provided']),
-      'Education:',
-      ...(eduLines.length ? eduLines : ['- No education provided']),
-    ];
-
-    if (certLines.length) {
-      lines.push('Certifications:', ...certLines);
-    }
-
-    lines.push(
-      '',
-      SEP,
-      'JOB DESCRIPTION HANDLING RULES',
-      SEP,
-      'If the job requires security clearance, on-site only work, DO NOT generate a resume.',
-      '',
-      SEP,
-      'OUTPUT FORMAT',
-      SEP,
-      'Return ONE JSON object with the following structure:',
-      outputJson,
-      '',
-      SEP,
-      'CONTENT RULES',
-      SEP,
-      'COMPANY NAME',
-      '- Must include the company name from the job description',
-      '- If the company name is not mentioned in the job description, set company name to Unknown',
-      'LAST COMPANY',
-      'Choose ONLY ONE company from the list below to replace the last company name.',
-      '- MUST reference ONLY primary business and product domain match.',
-      '- MUST IGNORE job description details such as job responsibilities, tools, tech stack, or skills.',
-      ...LAST_COMPANY_LIST.map((c, i) => `${i + 1}. ${c}`),
-      'SUMMARY',
-      '- 3\u20134 sentences',
-      '- Professional, ATS-optimized, concise',
-      '- Aligned directly to the job description'
-    );
-
-    // Job titles are model-chosen only when the resume isn't role-based (in
-    // role-based mode titles come from the profile, so there's no title key).
-    if (!roleBased) {
-      lines.push(
-        'JOB TITLES IN HEADER AND EACH COMPANY',
-        '- 2\u20134 words',
-        '- Common industry titles aligned with the job description',
-        '- Follow a logical career progression'
-      );
-    }
-
-    lines.push(
-      'SKILLS',
-      '- 30\u201335 total skills',
-      '- Categorized',
-      '- Must include technologies from the job description',
-      '- Only include technologies released before the experience period',
-      'EDUCATION MAJOR RULES:',
-      'Modify the major only if it is not related to the job description.',
-      '- Each major should be appropriate for the job description.',
-      '- Each major should be common in the industry.',
-      'EXPERIENCE \u2013 SENTENCE RULES (STRICT)',
-      '- DO NOT include the name or pronouns such as he or she',
-      '- Each sentence must be 150\u2013250 characters and contain detailed, technically rich descriptions of your role, specific contributions, and technologies used.',
-      '- Each sentence must end with a period',
-      '- Each experience must reference company industry relevance and career growth',
-      '- No sentence may be vague or generic',
-      '- No bullet symbols',
-      'SENTENCE COUNT PER COMPANY',
-      ...(sentenceLines.length
-        ? sentenceLines
-        : ['- No sentence count rules specified']),
-      'Each sentence must be placed as a separate string inside the sentences array.',
-      '',
-      SEP,
-      'FORMATTING RULES',
-      SEP,
-      '- JSON ONLY',
-      '- ONE code block ONLY',
-      '- No markdown outside JSON',
-      '- No comments',
-      '- No trailing commas',
-      '- Valid JSON syntax',
-      '- ATS-safe language only',
-      '',
-      SEP,
-      'FINAL VALIDATION',
-      SEP,
-      'Before responding, verify:',
-      '- All job description technologies are included',
-      '- Sentence length requirements are met',
-      '- Sentence count requirements are met',
-      '- Sentence DOES NOT include the name or pronouns such as he or she',
-      '- Job titles are aligned to the role',
-      '- ONLY primary industry domain is referenced in the last company, not the job responsibilities, tools, tech stack, or skills.',
-      '- Output is valid JSON',
-      '',
-      SEP,
-      'JOB DESCRIPTION',
-      SEP,
-      ''
-    );
-
-    return lines.join('\n');
   }
 
   function renderHtml() {
@@ -1595,7 +1189,7 @@
     try {
       const res = await window.api.checkCompanyDuplicate(saveFolder, company);
       if (!res || !res.duplicate) return false;
-      showToast(res.message || 'A similar company folder already exists.', {
+      showToast(res.message || 'A company folder with that name already exists.', {
         kind: 'error',
         actionLabel: res.path ? 'Open folder' : undefined,
         onAction: res.path ? () => window.api.revealInFolder(res.path) : undefined,
@@ -1608,6 +1202,9 @@
   }
 
   async function exportPdf() {
+    clearTimeout(parseTimer);
+    parseAndRender();
+    if (!$('json-error').classList.contains('hidden')) return;
     if (!currentResume || !currentProfile) return;
 
     const saveFolder = (currentProfile.saveFolder || '').trim();
@@ -1640,7 +1237,7 @@
     const jdEl = $('resume-jd');
     const jd = jdEl ? jdEl.value : '';
 
-    showToast('Generating PDF…', { sticky: true });
+    showToast('Generating PDF + DOCX…', { sticky: true });
     try {
       const result = await window.api.exportPdf({
         html,
@@ -1649,6 +1246,8 @@
         fileName,
         jd,
         profileId: currentProfile.id,
+        resumeData: currentResume,
+        style: currentStyle,
       });
       if (!result) {
         showToast('Export failed: no response from main process.', { kind: 'error' });
@@ -1669,8 +1268,8 @@
       }
       if (result.path) {
         const successMsg = result.jdPath
-          ? `Saved PDF and JD.txt to ${result.folder || result.path}`
-          : `Saved to ${result.path}`;
+          ? `Saved PDF, DOCX and JD.txt to ${result.folder || result.path}`
+          : `Saved PDF and DOCX to ${result.folder || result.path}`;
         showToast(successMsg, {
           actionLabel: 'Reveal',
           onAction: () => window.api.revealInFolder(result.path),

@@ -1,12 +1,13 @@
 {
   "name": "resume-manage",
   "productName": "Resume Manager",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "description": "Electron-based resume manager with multi-profile support",
   "main": "src/main/main.js",
   "author": "Resume Manager",
   "license": "MIT",
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
@@ -37,6 +38,9 @@
       "!**/{.DS_Store,Thumbs.db,.gitignore,.gitattributes,.editorconfig}"
     ],
     "asar": true,
+    "extraResources": [
+      { "from": "src/prompts/resume-new.md", "to": "resume-new.md" }
+    ],
     "win": {
       "target": [
         {

@@ -29,8 +29,6 @@
   const boolFieldIds = {
     linkedinVisible: 'linkedin-visible',
     githubVisible: 'github-visible',
-    roleBasedWork: 'role-based-work',
-    lastCompanyTailor: 'last-company-tailor',
   };
   const fieldEls = Object.fromEntries(
     Object.entries(fieldIds).map(([key, id]) => [key, document.getElementById(id)])
@@ -64,8 +62,6 @@
    * @property {boolean} linkedinVisible
    * @property {string} github
    * @property {boolean} githubVisible
-   * @property {boolean} roleBasedWork
-   * @property {boolean} lastCompanyTailor
    * @property {string} title
    * @property {string} saveFolder
    * @property {string} templateId
@@ -234,14 +230,12 @@
       github: p.github || '',
       githubVisible:
         typeof p.githubVisible === 'boolean' ? p.githubVisible : true,
-      roleBasedWork:
-        typeof p.roleBasedWork === 'boolean' ? p.roleBasedWork : false,
-      lastCompanyTailor:
-        typeof p.lastCompanyTailor === 'boolean' ? p.lastCompanyTailor : false,
       // Migrated from the older `seniorityLevel` field.
       title: p.title || p.seniorityLevel || '',
       saveFolder: typeof p.saveFolder === 'string' ? p.saveFolder : '',
-      templateId: typeof p.templateId === 'string' && p.templateId ? p.templateId : 'modern',
+      // Profiles saved with a since-removed template fall back to Classic.
+      templateId: typeof p.templateId === 'string' && window.App.Templates.list().some((t) => t.id === p.templateId)
+        ? p.templateId : 'classic',
       // Whether the user has explicitly confirmed a resume template. When
       // false, selecting the profile routes through the template picker once;
       // afterwards it goes straight to the workspace.
@@ -250,6 +244,8 @@
         ? p.workHistory.map((w) => ({
             company: (w && w.company) || '',
             title: (w && w.title) || '',
+            workType: (w && w.workType) || '',
+            workArrangement: (w && w.workArrangement) || '',
             period: (w && w.period) || '',
             location: (w && w.location) || '',
             bulletsCount: normalizeCount(w && w.bulletsCount),
@@ -290,8 +286,8 @@
   /**
    * One-time per-session migration: existing per-profile style was stored
    * as `style:{profileId}`. Templates are now per-(profile, template), so
-   * copy any legacy entry to `style:{profileId}:modern` (the previous
-   * default template). The legacy key is left untouched so older builds
+   * copy any legacy entry to `style:{profileId}:classic` (the default
+   * template). The legacy key is left untouched so older builds
    * still work if the data is opened in them.
    */
   function migrateLegacyStyleKeys() {
@@ -301,7 +297,7 @@
         if (!key) continue;
         const m = key.match(/^style:([^:]+)$/);
         if (!m) continue;
-        const target = `style:${m[1]}:modern`;
+        const target = `style:${m[1]}:classic`;
         if (localStorage.getItem(target) != null) continue;
         const val = localStorage.getItem(key);
         if (val != null) localStorage.setItem(target, val);
@@ -452,7 +448,7 @@
 
   function renderPicker(profile) {
     pickerProfile = profile;
-    pickerSelectedId = profile.templateId || 'modern';
+    pickerSelectedId = profile.templateId || 'classic';
     const grid = document.getElementById('template-grid');
     const nameEl = document.getElementById('picker-profile-name');
     if (nameEl) nameEl.textContent = displayName(profile);
@@ -477,7 +473,7 @@
     if (typeof tpl.thumbnail === 'function') {
       thumbWrap.innerHTML = tpl.thumbnail();
     } else {
-      thumbWrap.innerHTML = '<div class="tpl-thumb tpl-thumb-modern"></div>';
+      thumbWrap.innerHTML = '<div class="tpl-thumb tpl-thumb-classic"></div>';
     }
 
     const meta = document.createElement('div');
@@ -562,7 +558,7 @@
       const el = boolFieldEls[key];
       // Visibility toggles default on; the work-mode toggles default off.
       if (el) {
-        el.checked = key !== 'roleBasedWork' && key !== 'lastCompanyTailor';
+        el.checked = true;
       }
     }
   }
@@ -621,16 +617,12 @@
     return row;
   }
 
-  /**
-   * Work history: company + title + period + location. The title input is
-   * always present in the DOM so its value survives toggling role-based off
-   * and on; CSS hides it (via `#work-history-list:not(.role-based)`) and the
-   * `company` input expands to span two columns when title is hidden.
-   */
+  // Work metadata is supplied by the profile; rendered titles come from JSON.
   function buildWorkRow(entry) {
     const fields = [
       makeInput('company', 'Company name', entry.company),
-      makeInput('title', 'Job title', entry.title),
+      makeInput('workType', 'Work type (Full-time, Contract, Part-time)', entry.workType),
+      makeInput('workArrangement', 'Work arrangement (Remote, Hybrid, Onsite)', entry.workArrangement),
       makeInput('period', 'Period (e.g. 2020 – Present)', entry.period),
       makeInput('location', 'Location', entry.location),
       makeNumberInput(
@@ -684,20 +676,8 @@
     return out;
   }
 
-  function setWorkRoleBasedClass(on) {
-    workListEl.classList.toggle('role-based', !!on);
-  }
-
-  function setWorkTailorClass(on) {
-    // In tailor mode the LATEST (first / most recent) work row's company name is
-    // chosen by the LLM, so its company input is hidden via CSS.
-    workListEl.classList.toggle('last-company-tailor', !!on);
-  }
-
-  function populateWorkList(entries, roleBased, tailor) {
+  function populateWorkList(entries) {
     workListEl.innerHTML = '';
-    setWorkRoleBasedClass(roleBased);
-    setWorkTailorClass(tailor);
     const items = entries && entries.length ? entries : [{}];
     for (const it of items) workListEl.append(buildWorkRow(it));
   }
@@ -714,14 +694,6 @@
     for (const it of items) certListEl.append(buildCertRow(it));
   }
 
-  function onRoleBasedToggle() {
-    setWorkRoleBasedClass(!!boolFieldEls.roleBasedWork.checked);
-  }
-
-  function onLastCompanyTailorToggle() {
-    setWorkTailorClass(!!boolFieldEls.lastCompanyTailor.checked);
-  }
-
   function openEditor(mode, profile) {
     editor.mode = mode;
     editor.targetId = profile ? profile.id : null;
@@ -731,9 +703,7 @@
     if (profile) writeForm(profile);
     else clearForm();
 
-    const roleBased = !!boolFieldEls.roleBasedWork.checked;
-    const tailor = !!boolFieldEls.lastCompanyTailor.checked;
-    populateWorkList(profile ? profile.workHistory : [], roleBased, tailor);
+    populateWorkList(profile ? profile.workHistory : []);
     populateEduList(profile ? profile.education : []);
     populateCertList(profile ? profile.certifications : []);
 
@@ -886,8 +856,6 @@
   saveBtn.addEventListener('click', saveFromEditor);
 
   // Repeating-list controls
-  boolFieldEls.roleBasedWork.addEventListener('change', onRoleBasedToggle);
-  boolFieldEls.lastCompanyTailor.addEventListener('change', onLastCompanyTailorToggle);
 
   // Save folder picker (uses native folder dialog via IPC).
   const saveFolderPickBtn = document.getElementById('save-folder-pick');

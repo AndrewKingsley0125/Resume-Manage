@@ -13,7 +13,7 @@
   <body data-view="list">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark"></div>
+        <img class="brand-mark" src="assets/logo.png" alt="" />
         <div>
           <h1>Resume Manager</h1>
           <p id="subtitle" class="subtitle">Choose a profile to continue</p>
@@ -123,7 +123,7 @@
               Reset JSON
             </button>
             <button id="export-pdf-btn" class="btn btn-primary" type="button">
-              Export PDF
+              Export PDF + DOCX
             </button>
           </div>
         </header>
@@ -469,22 +469,9 @@
           <div class="form-section">
             <div class="form-section-header">
               <h3>Work History</h3>
-              <label class="toggle-switch">
-                <input type="checkbox" id="role-based-work" />
-                <span class="toggle-track"></span>
-                <span class="toggle-label">Role-based</span>
-              </label>
-              <label
-                class="toggle-switch"
-                title="Don't enter the latest (most recent) company's name; the LLM picks it from an industry list based on the job description"
-              >
-                <input type="checkbox" id="last-company-tailor" />
-                <span class="toggle-track"></span>
-                <span class="toggle-label">Last company tailor</span>
-              </label>
             </div>
             <label class="field full">
-              <span class="field-label">Title</span>
+              <span class="field-label">Target level / prompt guidance</span>
               <input
                 id="profile-title"
                 type="text"
@@ -887,7 +874,16 @@
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-    <script src="templates.js"></script>
+    <script src="../shared/resume.js"></script>
+    <script src="templates/core.js"></script>
+    <script src="templates/single-column.js"></script>
+    <script src="templates/classic.js"></script>
+    <script src="templates/timeline.js"></script>
+    <script src="templates/banner.js"></script>
+    <script src="templates/section-accent.js"></script>
+    <script src="templates/skill-chips.js"></script>
+    <script src="templates/accent-rail.js"></script>
+    <script src="templates/compact-pro.js"></script>
     <script src="workspace.js"></script>
     <script src="process.js"></script>
     <script src="renderer.js"></script>
