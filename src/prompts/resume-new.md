@@ -102,12 +102,25 @@ Create one experience object per supplied employer, containing company, title, o
 
 ### A. Role overview
 
-Write two connected sentences, approximately 30–45 words total:
+Write two connected sentences, approximately 30–45 words total.
 
-- Sentence 1: Name the team and one or two major projects, briefly explaining their purpose and users. Clearly distinguish the organizational team from each project through a meaningful action and relationship: explain what the candidate developed, maintained, or improved within that team. Integrate both names naturally rather than merely joining them with “and” or “on,” and do not combine them into one long title. Vary sentence openings and grammatical structures across employers; do not require a fixed opening or template. Apply Section 3’s researched-name and draft-name rules.
-- Sentence 2: Summarize the candidate’s main ownership and most impactful achievement, including one meaningful metric when it meets Section 6E’s measurement standards; otherwise state a concrete qualitative outcome.
+Naturally incorporate the team name and one or two major project names into the first sentence, along with the business purpose or users served.
 
-Follow the naming and evidence rules in Section 3. Establish the setting and scope. Reserve detailed implementation decisions and supporting results for contribution bullets; expand on the overview’s headline achievement without repeating the same metric. Do not repeat employer metadata or the title.
+Use the second sentence to communicate the candidate's ownership, architectural contribution, or most meaningful outcome.
+
+Vary sentence openings and narrative structure across employers. Favor candidate-centered, architecture-centered, or impact-centered phrasing based on the actual contribution.
+
+Avoid repetitive templates such as "The [Team] team developed [Project]" or "[Team] worked on [Project]."
+
+Prefer strong, specific verbs such as architected, designed, modernized, built, scaled, and implemented when they accurately describe the contribution.
+
+Do not imply the candidate created an entire project when their responsibility covered only a component or service.
+
+Preserve the requirement to bold team and project names.
+
+Ensure each overview sounds distinct, natural, and appropriate to the employer, engineering domain, and seniority.
+
+Avoid repeating detailed implementation decisions already explained in contribution bullets.
 
 ### B. Contribution selection and seniority
 

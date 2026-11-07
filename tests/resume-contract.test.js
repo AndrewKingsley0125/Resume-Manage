@@ -37,7 +37,7 @@ test('seed schema matches the selected profile', () => {
 });
 test('full prompt preserves revised instructions and injects profile only', () => {
   const prompt=buildPrompt(profile,new Date(2026,9,28));
-  for(const required of ['## 1. TASK, INPUTS, AND PRIORITIES','Given the candidate profile and complete job description (JD)','## 9. REQUIRED JSON OUTPUT','## 8. MANDATORY INTERNAL REVIEW AND ALIGNMENT LOOP','- Example $& Employer, Senior Engineer, Chicago, Contract, Remote, 2020 - 2026','Example University 2013 - 2017']) assert.ok(prompt.includes(required),required);
+  for(const required of ['## 1. TASK, INPUTS, AND PRIORITIES','Given the candidate profile and complete job description (JD)','## 9. REQUIRED JSON OUTPUT','## 8. MANDATORY INTERNAL REVIEW AND ALIGNMENT LOOP','- Example $& Employer, Chicago, Contract, Remote, 2020 - 2026','Example University 2013 - 2017']) assert.ok(prompt.includes(required),required);
   for(const forbidden of ['{{CANDIDATE_PROFILE}}','DoorDash','Instagram','JPMorgan Chase','New York University']) assert.ok(!prompt.includes(forbidden),forbidden);
 });
 test('repeated employers match distinct roles without reusing content', () => {

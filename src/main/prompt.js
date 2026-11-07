@@ -14,7 +14,7 @@ function renderPrompt(template, profile) {
   }
   const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
   const work = (profile.workHistory || []).map(w =>
-    '- ' + [w.company, w.title || profile.title, w.location, w.workType, w.workArrangement, w.period].filter(Boolean).join(', ')
+    '- ' + [w.company, w.title, w.location, w.workType, w.workArrangement, w.period].filter(Boolean).join(', ')
   );
   const education = (profile.education || []).map(e =>
     '- ' + [e.degree, [e.institution, e.period].filter(Boolean).join(' ')].filter(Boolean).join(', ')

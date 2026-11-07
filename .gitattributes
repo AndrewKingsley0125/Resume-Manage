@@ -1,0 +1,11 @@
+# Keep text line endings consistent across platforms, regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Preserve binary assets byte for byte.
+*.png -text
+*.ico -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.pdf -text
+*.zip -text

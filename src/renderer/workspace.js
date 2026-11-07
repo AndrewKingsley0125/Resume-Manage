@@ -950,7 +950,7 @@
     const ta = $('resume-prompt');
     ta.value = text;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
-    showToast('Prompt generated from profile');
+    showToast('Resume prompt created using the latest default rules and profile');
   }
 
   function renderHtml() {
