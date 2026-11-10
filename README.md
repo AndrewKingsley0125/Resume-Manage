@@ -187,3 +187,8 @@ Locations:
 - Import resume from a `.json` file
 - Page-break hints in templates
 - Optional encryption (Electron `safeStorage` / OS keychain) for sensitive profile fields
+
+
+## Chrome extension
+
+The separate [Resume Manager Apply extension](chrome-extension/README.md) connects to this app, automatically opens assigned job links beside ChatGPT in native split view, keeps its controls in Chrome's side panel, and provides manually triggered JD capture, ChatGPT resume/answer steps, review, and approved application filling. Select Chrome extension mode on a profile to pair an extension and send saved jobs. Up to eight extensions can be linked across the app. Application submission remains manual.

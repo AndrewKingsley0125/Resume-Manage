@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+    <title>Auto Apply</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Screen 1: profiles -->
+    <section id="view-profiles" class="screen">
+      <header class="bar">
+        <strong>Auto Apply · Profiles</strong>
+        <div class="row">
+          <button id="import-btn" class="btn ghost" type="button" title="Resume Manager profiles.json or backup file">Import</button>
+          <button id="new-profile-btn" class="btn primary" type="button">New profile</button>
+        </div>
+      </header>
+      <div class="screen-body">
+        <div id="profile-grid" class="profile-grid"></div>
+        <pre id="home-log" class="log"></pre>
+      </div>
+    </section>
+
+    <!-- Screen 2: profile editor (fields built by app.js) -->
+    <section id="view-editor" class="screen hidden">
+      <header class="bar">
+        <strong id="editor-title">Edit profile</strong>
+        <div class="row">
+          <button id="editor-delete" class="btn danger" type="button">Delete</button>
+          <button id="editor-cancel" class="btn ghost" type="button">Cancel</button>
+          <button id="editor-save" class="btn primary" type="button">Save</button>
+        </div>
+      </header>
+      <div class="screen-body">
+        <form id="editor-form" class="editor" autocomplete="off"></form>
+      </div>
+    </section>
+
+    <!-- Screen 3: one profile's applications, one browser tab per job link -->
+    <section id="view-workspace" class="layout hidden">
+      <aside class="panel">
+        <header class="bar">
+          <button id="back-btn" class="btn ghost" type="button">← Profiles</button>
+          <strong id="ws-profile" class="ellipsis"></strong>
+          <button id="cancel-btn" class="btn danger hidden" type="button">Cancel tab</button>
+        </header>
+
+        <main>
+          <section class="card" id="setup">
+            <p>Browser: normal Chrome / Edge with Auto Apply extension</p>
+            <label class="field"><span>ChatGPT and form filling</span>
+              <select id="automation-mode"><option value="automatic">Automatic — send, answer and fill</option><option value="manual">Manual — copy / paste and review</option></select>
+            </label>
+            <label><input type="checkbox" id="review-answers"> Review answers before filling</label>
+            <p id="chat-status" class="muted">Checking extension connection...</p>
+            <button id="chat-connect-btn" class="btn ghost" type="button">Refresh connection</button>
+            <label class="field">
+              <span>Job links (one per line): each opens its own tab</span>
+              <textarea id="url-input" rows="4" placeholder="https://…&#10;https://…"></textarea>
+            </label>
+            <div class="row">
+              <label class="field parallel">
+                <span>Run at once</span>
+                <select id="parallel-select"></select>
+              </label>
+              <button id="start-btn" class="btn primary" type="button">Open tabs &amp; start</button>
+            </div>
+            <p id="capacity" class="muted small"></p>
+          </section>
+
+          <section class="card" id="steps-card">
+            <h3 id="tab-heading" class="ellipsis"></h3>
+            <ol id="steps" class="steps"></ol>
+          </section>
+
+          <!-- Filled by app.js when the selected tab's run asks for input -->
+          <section id="ask" class="card hidden"></section>
+
+          <section class="card">
+            <h3>Log</h3>
+            <pre id="log" class="log"></pre>
+          </section>
+        </main>
+      </aside>
+
+      <section class="browser">
+        <nav id="tabs" class="tab-strip"></nav>
+        <div class="card" style="margin:24px">
+          <h2>Continue in Chrome</h2>
+          <p>Job sites and ChatGPT open in your regular browser with its existing login sessions.</p>
+          <p>After one-time extension setup, automatic mode sends prompts, reads completed ChatGPT replies, uploads the resume, answers questions and fills supported forms. Login, verification and unsupported controls pause the run for you.</p>
+          <button id="focus-browser" class="btn primary" type="button">Show this job in Chrome</button>
+          <p>Keep each application in its original run tab. Browser sessions are shared across profiles in this Chrome profile. Switch job-site accounts manually before starting another candidate.</p>
+        </div>
+      </section>
+    </section>
+
+    <dialog id="company-modal" class="modal" aria-labelledby="company-modal-title">
+      <h3 id="company-modal-title">Company name needed</h3>
+      <p class="muted">The generated resume has no company name. Enter one to name the save folder.</p>
+      <p id="company-modal-job" class="small ellipsis"></p>
+      <label class="field">
+        <span>Company name</span>
+        <input id="company-modal-input" type="text" autocomplete="off" />
+      </label>
+      <p id="company-modal-error" class="error-text"></p>
+      <div class="row">
+        <button id="company-modal-save" class="btn primary" type="button">Save</button>
+        <button id="company-modal-cancel" class="btn danger" type="button">Cancel run</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

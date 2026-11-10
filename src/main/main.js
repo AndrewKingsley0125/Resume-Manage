@@ -6,6 +6,9 @@ const AdmZip = require('adm-zip');
 const { buildDocx } = require('./docx');
 const Resume = require('../shared/resume');
 const { buildPrompt } = require('./prompt');
+const { createExtensionBridge } = require('./extension-bridge');
+const { renderExtensionResume } = require('./extension-render');
+let extensionBridge = null;
 
 const PROFILES_FILE = 'profiles.json';
 const RESUMES_DIR = 'resumes';
@@ -1277,7 +1280,34 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  extensionBridge = createExtensionBridge({
+    statePath: path.join(app.getPath('userData'), 'extension-bridge.json'),
+    getProfiles: readProfiles,
+    buildPrompt,
+    exportResume: async (profile, response, job) => {
+      const resume = Resume.parse(response, profile);
+      const company = job.company || resume.company;
+      if (!company || !company.trim()) return {error:'Enter the hiring company before exporting.'};
+      resume.company = company;
+      const result = await exportPdf({
+        html: renderExtensionResume(profile, resume, job.style),
+        saveFolder: profile.saveFolder,
+        companyName: company,
+        fileName: 'resume.pdf',
+        jd: job.jd, profileId: profile.id, resumeData: resume, style: job.style,
+      });
+      if (result.error) return result;
+      return {resume, files:result};
+    },
+  });
+  await extensionBridge.start();
+  ipcMain.handle('extension:state', () => extensionBridge.dashboard());
+  ipcMain.handle('extension:rotateCode', () => extensionBridge.rotateCode());
+  ipcMain.handle('extension:unlink', (_event, id) => extensionBridge.unlink(id));
+  ipcMain.handle('extension:assign', (_event, args) => extensionBridge.assign(args.profileId, args.url, args.connectionId, args.style));
+
   ipcMain.handle('prompt:generate', (_event, profileId) => {
     const profile = readProfiles().find(p => p.id === profileId);
     if (!profile) throw new Error('Profile not found');
@@ -1396,3 +1426,5 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('before-quit', () => { if (extensionBridge) extensionBridge.stop(); });

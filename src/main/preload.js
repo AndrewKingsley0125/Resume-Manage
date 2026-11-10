@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  extensionState: () => ipcRenderer.invoke('extension:state'),
+  extensionRotateCode: () => ipcRenderer.invoke('extension:rotateCode'),
+  extensionUnlink: id => ipcRenderer.invoke('extension:unlink', id),
+  extensionAssign: args => ipcRenderer.invoke('extension:assign', args),
   generatePrompt: (profileId) => ipcRenderer.invoke('prompt:generate', profileId),
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfiles: (profiles) => ipcRenderer.invoke('profiles:save', profiles),

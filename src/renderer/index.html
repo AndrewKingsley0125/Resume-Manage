@@ -93,6 +93,7 @@
 
       <!-- WORKSPACE VIEW -->
       <section id="workspace-view" class="view">
+        <div id="manual-workspace">
         <header class="workspace-header">
           <div class="workspace-profile">
             <div id="ws-avatar" class="avatar avatar-sm">?</div>
@@ -293,6 +294,44 @@
             </div>
           </div>
         </div>
+        </div>
+        <section id="extension-workspace" hidden aria-label="Chrome extension workspace">
+          <header class="workspace-header">
+            <div>
+              <h2 id="extension-profile-name">Profile</h2>
+              <p class="muted small">Chrome extension mode &middot; Review answers before filling. Submit applications yourself.</p>
+            </div>
+            <button id="extension-edit-profile" class="btn btn-ghost" type="button">Edit profile</button>
+          </header>
+          <div class="extension-layout">
+            <section class="extension-panel extension-links-panel" aria-labelledby="extension-links-heading">
+              <h3 id="extension-links-heading">Job links</h3>
+              <label for="extension-job-links" class="field-label">One job link per line</label>
+              <textarea id="extension-job-links" rows="12" spellcheck="false" placeholder="https://jobs.example.com/role" aria-describedby="extension-links-help"></textarea>
+              <p id="extension-links-help" class="muted small">Save links for this profile. Duplicate links are combined.</p>
+              <button id="extension-save-links" class="btn btn-primary" type="button">Save job links</button>
+              <p id="extension-links-status" class="muted small" role="status" aria-live="polite"></p>
+            </section>
+            <section class="extension-panel" aria-labelledby="extension-dashboard-heading">
+              <h3 id="extension-dashboard-heading">Chrome extension dashboard</h3>
+              <div class="extension-metrics">
+                <div><strong id="extension-connected-count">0 / 8</strong><span>Extensions connected to this app</span></div>
+                <div><strong id="extension-job-count">0</strong><span>Saved job links for this profile</span></div>
+              </div>
+              <p id="extension-bridge-notice" class="extension-connection-notice">Checking local connection service...</p>
+              <label class="field">Pairing code (enter in the extension)<input id="extension-pairing-code" type="text" readonly /></label>
+              <button id="extension-copy-code" class="btn btn-ghost btn-sm" type="button">Copy pairing code</button>
+              <button id="extension-rotate-code" class="btn btn-ghost btn-sm" type="button">New pairing code</button>
+              <label class="field">Send jobs to<select id="extension-target" class="select"><option value="">Link an extension first</option></select></label>
+              <p id="extension-dispatch-status" class="muted small" role="status"></p>
+              <p class="muted small">Up to 8 linked extensions across the app. Send a saved job below, then open it from the extension. Review answers before filling; submit yourself.</p>
+              <div id="extension-slots" class="extension-slots" aria-label="Extension connection slots"></div>
+              <h4>Saved jobs</h4>
+              <ul id="extension-job-list" class="extension-job-list"></ul>
+              <p id="extension-jobs-empty" class="muted small">Add job links on the left to get started.</p>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
 
@@ -303,6 +342,14 @@
         <h2 id="modal-title">New profile</h2>
 
         <div class="modal-body">
+          <fieldset class="profile-mode-field">
+            <legend class="field-label">Application mode</legend>
+            <div class="profile-mode-options">
+              <label><input type="radio" name="profile-application-mode" id="profile-manual-mode" value="manual" checked /> Manual</label>
+              <label><input type="radio" name="profile-application-mode" id="profile-extension-mode" value="extension" /> Chrome extension (Auto)</label>
+            </div>
+            <p class="muted small">Manual opens the resume editor. Chrome extension opens job links and the connection dashboard.</p>
+          </fieldset>
           <div class="form-grid">
             <label class="field">
               <span class="field-label">First name</span>
@@ -518,6 +565,17 @@
             </button>
           </div>
 
+          <div class="form-section">
+            <div class="form-section-header"><h3>Application details</h3></div>
+            <p class="muted small">Saved for application questions. Leave unknown answers unanswered. These fields are separate from your resume.</p>
+            <div id="application-details-fields"></div>
+            <label class="field full application-answer-prompt-field">
+              <span class="field-label">Prompt for experience, company interest, and cultural-fit answers</span>
+              <p id="application-answer-prompt-help" class="muted small">Edit how answers to open-ended questions should be written. Factual questions use the application details above.</p>
+              <textarea id="application-answer-prompt" rows="7" aria-describedby="application-answer-prompt-help" spellcheck="true"></textarea>
+            </label>
+
+          </div>
           <p class="muted small">Stored locally on this device only.</p>
         </div>
 
@@ -875,6 +933,8 @@
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
     <script src="../shared/resume.js"></script>
+    <script src="../shared/application-profile.js"></script>
+    <script src="../shared/profile-workflow.js"></script>
     <script src="templates/core.js"></script>
     <script src="templates/single-column.js"></script>
     <script src="templates/classic.js"></script>
@@ -886,6 +946,7 @@
     <script src="templates/compact-pro.js"></script>
     <script src="workspace.js"></script>
     <script src="process.js"></script>
+    <script src="extension-workspace.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

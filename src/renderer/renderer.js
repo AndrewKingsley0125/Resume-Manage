@@ -232,6 +232,9 @@
         typeof p.githubVisible === 'boolean' ? p.githubVisible : true,
       // Migrated from the older `seniorityLevel` field.
       title: p.title || p.seniorityLevel || '',
+      applicationDetails: window.App.ApplicationProfile.normalize(p.applicationDetails),
+      applicationMode: window.App.ProfileWorkflow.normalizeMode(p.applicationMode),
+      extensionJobLinks: window.App.ProfileWorkflow.normalizeJobLinks(p.extensionJobLinks),
       saveFolder: typeof p.saveFolder === 'string' ? p.saveFolder : '',
       // Profiles saved with a since-removed template fall back to Classic.
       templateId: typeof p.templateId === 'string' && window.App.Templates.list().some((t) => t.id === p.templateId)
@@ -393,7 +396,7 @@
     // Skip the template picker for profiles that have already confirmed a
     // template; only first-timers go through the picker. Users can still
     // change the template later via "Change template" in the workspace.
-    if (profile.templateChosen) {
+    if (profile.applicationMode === 'extension' || profile.templateChosen) {
       window.location.hash = `#/profile/${encodeURIComponent(profile.id)}`;
     } else {
       window.location.hash = `#/profile/${encodeURIComponent(profile.id)}/template`;
@@ -409,14 +412,30 @@
       if (view === 'list') subtitle.textContent = 'Choose a profile to continue';
       else if (view === 'picker') subtitle.textContent = 'Choose a resume template';
     }
-    if (view !== 'workspace' && window.App && window.App.Workspace) {
+    window.App.ExtensionWorkspace.close();
+    const extensionMode = view === 'workspace' && profile && profile.applicationMode === 'extension';
+    document.getElementById('manual-workspace').hidden = !!extensionMode;
+    document.getElementById('extension-workspace').hidden = !extensionMode;
+    if ((view !== 'workspace' || extensionMode) && window.App && window.App.Workspace) {
       window.App.Workspace.close();
     }
     if (view === 'picker' && profile) {
       renderPicker(profile);
     }
     if (view === 'workspace' && profile && window.App && window.App.Workspace) {
-      window.App.Workspace.open(profile);
+      if (extensionMode) {
+        window.App.ExtensionWorkspace.open(profile, async links => {
+          const target = profiles.find(p => p.id === profile.id);
+          if (!target) throw new Error('Profile no longer exists.');
+          const updated = profiles.map(p => p === target ? {...p, extensionJobLinks: links} : p);
+          const ok = await window.api.saveProfiles(updated);
+          if (ok === false) throw new Error('Could not save job links.');
+          // Keep references held by tiles and the active workspace current.
+          target.extensionJobLinks = links;
+        }, () => openEditor('edit', profiles.find(p => p.id === profile.id)));
+      } else {
+        window.App.Workspace.open(profile);
+      }
     }
   }
 
@@ -427,6 +446,10 @@
       const id = decodeURIComponent(mt[1]);
       const profile = profiles.find((p) => p.id === id);
       if (!profile) { window.location.hash = '#/'; return; }
+      if (profile.applicationMode === 'extension') {
+        window.location.hash = `#/profile/${encodeURIComponent(profile.id)}`;
+        return;
+      }
       setView('picker', profile);
       return;
     }
@@ -533,10 +556,13 @@
       const el = boolFieldEls[key];
       out[key] = el ? !!el.checked : false;
     }
+    out.applicationMode = document.getElementById('profile-extension-mode').checked ? 'extension' : 'manual';
     return out;
   }
 
   function writeForm(profile) {
+    document.getElementById('profile-extension-mode').checked = profile.applicationMode === 'extension';
+    document.getElementById('profile-manual-mode').checked = profile.applicationMode !== 'extension';
     for (const key of Object.keys(fieldIds)) {
       const el = fieldEls[key];
       if (el) el.value = profile[key] || '';
@@ -550,6 +576,8 @@
   }
 
   function clearForm() {
+    document.getElementById('profile-manual-mode').checked = true;
+    document.getElementById('profile-extension-mode').checked = false;
     for (const key of Object.keys(fieldIds)) {
       const el = fieldEls[key];
       if (el) el.value = '';
@@ -568,6 +596,52 @@
   const workListEl = document.getElementById('work-history-list');
   const eduListEl = document.getElementById('education-list');
   const certListEl = document.getElementById('certifications-list');
+
+  const applicationProfile = window.App.ApplicationProfile;
+  const applicationInputs = { answerPrompt: document.getElementById('application-answer-prompt') };
+  const applicationContainer = document.getElementById('application-details-fields');
+  let applicationGroup = '';
+  let applicationGrid;
+  for (const [key, title, group, options] of applicationProfile.fields) {
+    if (group !== applicationGroup) {
+      const heading = document.createElement('h4');
+      heading.textContent = group;
+      applicationGrid = document.createElement('div');
+      applicationGrid.className = 'form-grid';
+      applicationContainer.append(heading, applicationGrid);
+      applicationGroup = group;
+    }
+    const label = document.createElement('label');
+    label.className = 'field';
+    const caption = document.createElement('span');
+    caption.className = 'field-label';
+    caption.textContent = title;
+    const input = document.createElement(options ? 'select' : 'input');
+    input.id = `application-${key}`;
+    if (options) {
+      input.className = 'select';
+      for (const value of (key === 'hasCompanyConnections' ? options : ['', ...options])) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value || 'Unanswered';
+        input.append(option);
+      }
+    } else { input.type = 'text'; }
+    applicationInputs[key] = input;
+    label.append(caption, input);
+    applicationGrid.append(label);
+  }
+
+  function populateApplicationDetails(value) {
+    const details = applicationProfile.normalize(value);
+    for (const [key, input] of Object.entries(applicationInputs)) input.value = details[key];
+  }
+
+  function readApplicationDetails() {
+    return applicationProfile.normalize({
+      ...Object.fromEntries(Object.entries(applicationInputs).map(([key, input]) => [key, input.value])),
+    });
+  }
 
   function makeInput(key, placeholder, value, opts) {
     const inp = document.createElement('input');
@@ -703,6 +777,7 @@
     if (profile) writeForm(profile);
     else clearForm();
 
+    populateApplicationDetails(profile ? profile.applicationDetails : null);
     populateWorkList(profile ? profile.workHistory : []);
     populateEduList(profile ? profile.education : []);
     populateCertList(profile ? profile.certifications : []);
@@ -722,6 +797,7 @@
 
   async function saveFromEditor() {
     const data = readForm();
+    data.applicationDetails = readApplicationDetails();
     data.workHistory = readEntries(workListEl);
     data.education = readEntries(eduListEl);
     data.certifications = readEntries(certListEl);
@@ -754,6 +830,7 @@
     await persist();
     hideModal(modal);
     render();
+    if (document.body.dataset.view === 'workspace') handleRoute();
   }
 
   // ---------- Delete confirmation ----------
