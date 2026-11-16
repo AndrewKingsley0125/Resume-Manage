@@ -135,17 +135,23 @@ Use clear, natural, technically specific American professional English.
 
 Use balanced `**` markers only inside the JSON string values for `summary`, each employer's `overview`, and each contribution in `sentences`. Include the literal markers in the JSON even when it is displayed in a code block; the downstream resume renderer must interpret them as bold.
 
+Highlight the phrases that show what the candidate solved, how it was solved, and why it mattered. Prioritize technical depth, difficult engineering work, demonstrated skills, ownership, and impact rather than isolated technology names.
+
 Apply these mandatory highlighting rules:
 
 - Bold every meaningful engineering metric wherever it occurs in these fields, including the number, unit, and necessary qualifier as one complete phrase, such as `**20 million requests per day**`, `**99.99% availability**`, or `**an estimated 30% reduction**`. Preserve estimate labels. Do not bold employment dates or years of experience merely because they contain numbers.
-- Identify a concise priority set of central JD technologies and engineering concepts during JD analysis. Bold their first occurrence in the summary and their first occurrence within each employer's overview and contributions, when present. Do not add keywords solely to meet highlighting requirements.
+- Highlight specific architecture and system-design phrases, such as `**fault-tolerant distributed systems**` or `**event-driven architecture**`.
+- Highlight advanced engineering techniques and demonstrated technical skills, such as `**idempotent event processing**`, `**concurrency control**`, or `**transaction isolation tuning**`.
+- Highlight concrete technical challenges and solutions, such as `**resolving database lock contention**`, `**preventing data loss during failover**`, or `**zero-downtime migration**`.
+- Highlight specific ownership and leadership phrases, such as `**end-to-end platform ownership**` or `**cross-team architecture decisions**`. Do not highlight generic claims such as “strong leadership” or “excellent problem-solving.”
+- In the summary, select 2–4 substantive phrases from the categories above. In every employer overview, highlight at least one substantive technical or ownership phrase in addition to team/project names and metrics. In every contribution bullet, highlight 1–2 substantive phrases identifying its strongest technique, architectural decision, challenge, solution, or ownership contribution, in addition to any metrics. Select only phrases supported by the sentence; do not invent content to satisfy highlighting coverage.
 - Bold each team name and project name on its first occurrence in the employer's overview.
-- Selectively bold meaningful architecture, ownership, and leadership capabilities when they add useful emphasis. Prioritize required metric and keyword highlighting over this optional emphasis.
-- Keep spans short and specific. Do not bold entire sentences, generic action verbs, unrelated terms, or repeated occurrences of the same keyword within an employer unless needed for a complete metric phrase.
+- Technology names may be highlighted when essential to the accomplishment, preferably within a meaningful phrase such as `**Kafka partition rebalancing**`. Bolding a standalone language, framework, database, or cloud provider does not satisfy the substantive-phrase requirement and must not dominate the emphasis.
+- Keep spans short and specific, usually 2–6 words for technical and ownership phrases; complete metric phrases and proper names may be longer. Do not bold entire sentences, generic action verbs, unrelated terms, or most of a sentence. Avoid repeating the same highlighted phrase within a role when a different substantive contribution is available. A relevant technique may still be highlighted in another bullet when it is central to that bullet's distinct contribution.
 
-Do not apply Markdown formatting to company names, titles, skills, technologies, or education.
+Do not apply Markdown formatting to company names, titles, skills, technologies, or education fields. This field restriction does not prohibit meaningful technology phrases within summary, overview, or contribution strings.
 
-Before final output, inspect every eligible string: verify that every meaningful metric is enclosed in a complete bold span, required first occurrences of priority keywords and team/project names are highlighted, all `**` markers are paired without nesting, and no prohibited field contains formatting. Repair missing or malformed highlighting without changing the other content requirements.
+Before final output, inspect every eligible string: verify that all meaningful metrics are enclosed in complete bold spans; the summary, every overview, and every contribution bullet meet the substantive-phrase requirements; team/project names are highlighted as required; technology names do not substitute for technical depth; all `**` markers are paired without nesting; and no prohibited field contains formatting. Repair missing, weak, excessive, or malformed highlighting without changing the other content requirements.
 
 ### Narrative Consistency
 
@@ -215,7 +221,7 @@ For eligible positions, return exactly these top-level fields:
 
 ```json
 {
-  "company": "Hiring company",
+  "company": "",
   "title": "JD-aligned resume title",
   "summary": "Four connected sentences with selective **keyword highlighting**.",
   "skills": [
@@ -259,7 +265,7 @@ For eligible positions, return exactly these top-level fields:
 
 ### JSON Rules
 
-1. Use exactly the top-level keys `company`, `title`, `summary`, `skills`, `experience`, and `education`.
+1. Use exactly the top-level keys `company`, `title`, `summary`, `skills`, `experience`, and `education`. Set the top-level `company` to the hiring company name only when it is explicitly identifiable from the supplied JD. If the JD does not identify the hiring company or its identity is ambiguous, return exactly `"company": ""`. Never use placeholders such as `"Hiring Company"`, `"Unknown"`, or `"N/A"`, return null, guess the name, or infer it from external research. This rule applies only to the top-level hiring-company field; preserve the employer names in `experience`.
 2. Include one experience object per employer, ordered by employment end date, newest first.
 3. Every experience object must contain exactly `company`, `title`, `overview`, `sentences`, and `technologies`.
 4. Represent skills as category objects containing arrays of individual skill strings.

@@ -14,7 +14,7 @@ async function runs() {return (await chrome.storage.session.get('runs')).runs ||
 async function saveRun(id, patch) {
   const saved = runWrites.then(async () => {const all = await runs();all[id] = {...all[id],id,...patch};await chrome.storage.session.set({runs:all});
     const {runAnchors={}}=await chrome.storage.local.get('runAnchors');
-    const run=all[id], anchor={};
+    const run=all[id], anchor={session:await browserSession()};
     for(const key of ['jobTabId','chatTabId','groupId'])if(run[key]!==undefined)anchor[key]=run[key];
     for(const key of ['resumeReceipt','answerReceipt'])if(run[key])anchor[key]=Object.fromEntries(['marker','userMessageId','conversationPath','sentAt','responseBaseline'].filter(k=>run[key][k]!==undefined).map(k=>[k,run[key][k]]));
     if(run.responseMonitor?.status==='waiting')anchor.responseMonitor=run.responseMonitor;
@@ -66,10 +66,26 @@ chrome.tabs.onUpdated.addListener(async (tabId, change) => {
   if (!change.title && !change.favIconUrl && change.status !== 'complete') return;
   for (const [id, run] of Object.entries(await runs())) if (run.jobTabId === tabId) reportProgress(id, run);
 });
+// Tab and window ids are only valid until Chrome quits: after a restart the same numbers
+// belong to other tabs, or to none. Every browser session gets its own mark, and ids saved
+// in another session are never reused.
+let sessionMark = null;
+function browserSession() {
+  return sessionMark ||= chrome.storage.session.get('browserSession').then(async ({browserSession: mark}) => {
+    if (mark) return mark;
+    const fresh = crypto.randomUUID();await chrome.storage.session.set({browserSession:fresh});return fresh;
+  });
+}
+// Both of the job's tabs still exist.
+async function liveTabs(run) {
+  if (!run || !Number.isInteger(run.jobTabId) || !Number.isInteger(run.chatTabId) || run.jobTabId === run.chatTabId) return false;
+  try {await Promise.all([chrome.tabs.get(run.jobTabId),chrome.tabs.get(run.chatTabId)]);return true;} catch (_) {return false;}
+}
 async function recoverRun(id) {
   const {runAnchors={}}=await chrome.storage.local.get('runAnchors');
-  if(runAnchors[id]?.chatTabId) {
-    try {const tab=await chrome.tabs.get(runAnchors[id].chatTabId);if(tab.url && new URL(tab.url).hostname==='chatgpt.com')return saveRun(id,runAnchors[id]);}catch(_){}
+  const anchor=runAnchors[id];
+  if(anchor && anchor.session===await browserSession() && await liveTabs(anchor)) {
+    try {const tab=await chrome.tabs.get(anchor.chatTabId);if(tab.url && new URL(tab.url).hostname==='chatgpt.com')return saveRun(id,anchor);}catch(_){}
   }
   // Recover older installations from the group belonging to this exact assigned job URL.
   const job=await request(jobPath(id));
@@ -77,12 +93,28 @@ async function recoverRun(id) {
   const pairs=[];
   for(const site of sites.filter(tab=>tab.groupId>=0)) {
     const members=await chrome.tabs.query({groupId:site.groupId});
-    for(const chat of members.filter(tab=>tab.url && new URL(tab.url).hostname==='chatgpt.com'))pairs.push({jobTabId:site.id,chatTabId:chat.id,groupId:site.groupId});
+    for(const chat of members.filter(tab=>tab.url && new URL(tab.url).hostname==='chatgpt.com'))pairs.push({jobTabId:site.id,chatTabId:chat.id,groupId:site.groupId,windowId:site.windowId});
   }
-  if(pairs.length===1)return saveRun(id,pairs[0]);
+  if(pairs.length===1)return saveRun(id,{...pairs[0],ready:false});
   return null;
 }
-async function getRun(id) {const run=(await runs())[id] || await recoverRun(id);if(!run)throw new Error('Open the assigned job and its ChatGPT conversation first.');return run;}
+// The job's run, only while its tabs are open: found again if Chrome restored them under new ids.
+async function findRun(id) {
+  const run=(await runs())[id];
+  if(await liveTabs(run))return run;
+  return recoverRun(id);
+}
+async function getRun(id) {const run=await findRun(id);if(!run)throw new Error("This job's window is not open. Choose Reopen windows.");return run;}
+// For a step you start: if the job's window is gone (closed, or Chrome was restarted),
+// it is opened again first, so the step carries on instead of failing.
+async function ensureRun(id) {
+  const run=await findRun(id);
+  if(run)return run;
+  const job=await request(jobPath(id));
+  if(['completed','unlinked'].includes(job.status))throw new Error('This application has already ended.');
+  await openTabs(id,{checkReady:false});
+  return getRun(id);
+}
 const jobPath = id => '/v1/jobs/' + encodeURIComponent(id);
 // Saved answers for each profile and site, kept across jobs. Writes are queued
 // so a fill and a submit report arriving together cannot drop each other.
@@ -259,14 +291,24 @@ async function collectMonitoredResponse(message,sender) {
   locks.add(message.id);
   try {
     if(message.event==='chat-response-timeout') {
-      await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:'Automatic collection timed out. Use Read or paste the completed response.'}});
+      const timedOut='Automatic collection timed out. Use Read or paste the completed response.';
+      await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:timedOut},
+        ...(run.fullAuto?.active?{fullAuto:null,fullAutoBlocker:{stage:message.kind==='resume'?'resume':'questions',message:'ChatGPT did not finish in time.',at:Date.now()}}:{})});
     }else if(message.kind==='resume') {
       const detail=await request(jobPath(message.id));
+      let matched=false;
       if(!detail.files) {
         const result=await readResumeJson(run,detail.resumePrompt,{quiet:true});
+        matched=!!result.matched;
         await saveRun(message.id,{pendingResumeResponse:result.response,pendingResumeUrl:result.url});
       }
       await saveRun(message.id,{responseMonitor:{...monitor,status:'ready'}});
+      if(run.fullAuto?.active) {
+        let outcome;
+        try {outcome=await fullAutoResumeReady(message.id,matched);}catch(error){outcome=await stopFullAuto(message.id,'resume',error.message);}
+        chrome.runtime.sendMessage({event:'fill-progress',id:message.id,message:outcome.message}).catch(()=>{});
+        return {collected:true};
+      }
     }else {
       const result=await readChatJson(run,run.answerReceipt,source=>answerJson(source,askedFields(run)),undefined,{quiet:true});
       let next=null;
@@ -510,6 +552,74 @@ async function resumeWaitingAutoFill() {
     } catch (_) { /* reported through the job's progress */ } finally {locks.delete(id);}
   }
 }
+// ---------- Full auto: the whole application from one click ----------
+// Opens the pages, reads the JD, has ChatGPT write the resume, exports it, then Auto-fills the
+// application page by page. The first blocker stops it and hands that step back to you, with the
+// reason, in the Resume Apply window and the app. It never clicks Submit.
+const FULL_AUTO_MIN_JD = 200;
+const FULL_AUTO_STEP = {pages:'Job', resume:'Resume', questions:'Questions'};
+async function startFullAuto(id) {
+  const job = await request(jobPath(id));
+  if (['completed','unlinked'].includes(job.status)) throw new Error('This application has already ended.');
+  await saveRun(id,{fullAuto:{active:true,stage:'pages',startedAt:Date.now()},fullAutoBlocker:null,autoSummary:null});
+  return fullAutoContinue(id);
+}
+async function stopFullAuto(id,stage,reason) {
+  await saveRun(id,{fullAuto:null,fullAutoBlocker:{stage,message:reason,at:Date.now()}});
+  return {message:`Full auto stopped at ${FULL_AUTO_STEP[stage]}: ${reason} Finish this step yourself, or fix it and click Full auto again to carry on.`,blocked:stage};
+}
+async function fullAutoContinue(id) {
+  let run = (await runs())[id] || await recoverRun(id);
+  if (run && !run.fullAuto?.active) return {message:'Full auto stopped.'};
+  let stage = 'pages';
+  try {
+    // 1. The job and ChatGPT pages: reopened only if they are gone, so the job's status stays.
+    let open = !!run;
+    if (open) try {await chrome.tabs.get(run.jobTabId);await chrome.tabs.get(run.chatTabId);} catch (_) {open = false;}
+    if (!open) {
+      if (!run) await saveRun(id,{fullAuto:{active:true,stage:'pages',startedAt:Date.now()}});
+      await openTabs(id,{checkReady:false});
+    }
+    run = await getRun(id);
+    await requireReady(run);
+    let job = await request(jobPath(id));
+    // 2. The resume, unless it is already exported.
+    if (!job.files) {
+      stage = 'resume';
+      await saveRun(id,{fullAuto:{...run.fullAuto,stage}});
+      if (run.pendingResumeResponse) return stopFullAuto(id,stage,'The resume ChatGPT wrote needs your review before it is exported.');
+      if (run.responseMonitor?.kind === 'resume' && run.responseMonitor.status === 'waiting') return {message:'Waiting for ChatGPT to write the resume. Full auto carries on when it finishes.'};
+      // A JD you already reviewed is kept; otherwise it is read from the page.
+      let posting = job.jd ? {company:job.company || '', title:job.title || '', description:job.jd} : (await command({action:'extract',id})).job;
+      const description = String(posting?.description || '').trim();
+      if (description.length < FULL_AUTO_MIN_JD) return stopFullAuto(id,stage,description ? 'The job description read from the page looks incomplete.' : 'No job description was found on the page.');
+      await command({action:'sendResume',id,job:{company:String(posting.company || '').trim(),title:String(posting.title || '').trim(),description}});
+      const receipt = (await getRun(id)).resumeReceipt || {};
+      return {message:receipt.manualSend || receipt.sendUnconfirmed
+        ? 'Resume prompt inserted in ChatGPT, but sending was not confirmed. Press Send there if it has not gone; Full auto carries on when the reply finishes.'
+        : 'Resume prompt sent. Full auto carries on when ChatGPT finishes.'};
+    }
+    // 3. The application: Auto-fill takes over from here and reports how it ends.
+    stage = 'questions';
+    await saveRun(id,{fullAuto:null});
+    const outcome = await startAutoFill(id,await getRun(id));
+    return {...outcome,message:`Resume ready. ${outcome.message}`};
+  } catch (error) {return stopFullAuto(id,stage,error.message || String(error));}
+}
+// The resume reply was collected while Full auto was running: export it only when it is
+// certainly this job's reply, then move on to the application.
+async function fullAutoResumeReady(id,matched) {
+  const run = await getRun(id);
+  if (!run.fullAuto?.active) return {message:'Full auto stopped.'};
+  if (!(await request(jobPath(id))).files) {
+    if (!run.pendingResumeResponse) return stopFullAuto(id,'resume','The resume reply could not be read.');
+    if (!matched) return stopFullAuto(id,'resume',"ChatGPT's reply could not be matched to this job for certain. Review the resume, then export it.");
+    try {await request(jobPath(id)+'/resume',{response:run.pendingResumeResponse});}
+    catch (error) {return stopFullAuto(id,'resume',`The resume could not be exported: ${error.message}`);}
+    await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null});
+  }
+  return fullAutoContinue(id);
+}
 async function waitComplete(tabId) {
   const until = Date.now() + 60000;
   while (Date.now() < until) {const tab = await chrome.tabs.get(tabId);if (tab.status === 'complete') return tab;await new Promise(resolve => setTimeout(resolve,500));}
@@ -583,7 +693,7 @@ async function openPanelWindow(id, jobWindowId, existingId) {
 }
 // Opens (or brings back) the job's Resume Apply window, docked to the right of its window.
 async function showDetails(id) {
-  const run = await getRun(id);
+  const run = await ensureRun(id);
   let tab;try {tab = await chrome.tabs.get(run.jobTabId);} catch (_) {throw new Error("This job's window was closed. Choose Reopen windows.");}
   const docked = await openPanelWindow(id, tab.windowId, run.panelWindowId);
   await saveRun(id,{panelWindowId:docked.id, panelShrink:(run.panelWindowId === docked.id ? run.panelShrink || 0 : 0) + docked.shrink});
@@ -675,6 +785,7 @@ const APP_COMMANDS = {
   prepare: async id => {const {job} = await command({action:'extract',id});return command({action:'sendResume',id,job});},
   confirmResume: id => command({action:'confirmResume',id,confirmed:true}),
   auto: id => command({action:'auto',id}),
+  fullAuto: id => command({action:'fullAuto',id}),
   scan: id => command({action:'scan',id}),
   fill: async id => {
     const run = await getRun(id);
@@ -688,7 +799,7 @@ const APP_COMMANDS = {
   // Brings the job's window to the front with its application tab showing; its Resume Apply
   // window comes up with it.
   focus: async id => {
-    const run = await getRun(id);
+    const run = await ensureRun(id);
     let tab;try {tab = await chrome.tabs.get(run.jobTabId);} catch (_) {throw new Error("This job's window was closed. Click Reopen.");}
     const win = await chrome.windows.get(tab.windowId);
     // Resume Apply first, then the job window on top of it, so typing goes to the job page.
@@ -723,16 +834,48 @@ function runAppCommands(state) {
     })();
   }
 }
+// Start over (from the app): close the job's tabs and details window, stop watching its
+// ChatGPT, forget its run, and tell the app it is done.
+const cleaning = new Set();
+function cleanUpJobs(ids) {
+  for (const id of ids) {
+    if (cleaning.has(id)) continue;
+    cleaning.add(id);
+    (async () => {
+      try {
+        const all = await runs(), run = all[id] || ((await chrome.storage.local.get('runAnchors')).runAnchors || {})[id] || {};
+        if (run.chatTabId) await chat(run.chatTabId,'stopResponseWatch').catch(() => {});
+        if (run.panelWindowId) await chrome.windows.remove(run.panelWindowId).catch(() => {});
+        const tabs = [run.jobTabId, run.chatTabId, run.panelTabId].filter(Number.isInteger);
+        if (tabs.length) await chrome.tabs.remove(tabs).catch(() => {});
+        await (runWrites = runWrites.then(async () => {
+          const current = await runs();delete current[id];await chrome.storage.session.set({runs:current});
+          const {runAnchors={}} = await chrome.storage.local.get('runAnchors');delete runAnchors[id];await chrome.storage.local.set({runAnchors});
+        }).catch(() => {}));
+        reported.delete(id);
+        await request('/v1/cleanup-done', {jobId:id});
+        chrome.runtime.sendMessage({event:'jobs-updated', id}).catch(() => {});
+      } catch (_) { /* tried again on the next update */ } finally {cleaning.delete(id);}
+    })();
+  }
+}
 function startWatcher() {
   if (watching) return;
   watching = true;
   (async () => {
-    let cursor = '';
+    let cursor = '', refreshed = false;
     try {
       while ((await chrome.storage.local.get('credentials')).credentials) {
         try {
           const state = await request('/v1/events?after='+encodeURIComponent(cursor));
-          cursor = state.cursor || '';await openNewAssignments(state);runAppCommands(state);
+          cursor = state.cursor || '';await openNewAssignments(state);runAppCommands(state);cleanUpJobs(state.cleanup || []);
+          // Once per start: tell the app what each open job is really doing now, replacing
+          // anything left over from before Chrome or the extension restarted.
+          if (!refreshed) {
+            refreshed = true;
+            const all = await runs();
+            for (const job of state.jobs || []) if (!['completed','unlinked'].includes(job.status)) reportProgress(job.id, all[job.id] || {});
+          }
         } catch (_) {await new Promise(resolve => setTimeout(resolve,10000));}
       }
     } finally {watching = false;}
@@ -833,7 +976,12 @@ async function command(message) {
     }
     return {message:"Application marked ended in Resume Manager. Its tabs are closed."};
   }
-  const run = action === 'readResume' && message.response ? (await runs())[id] || {} : await getRun(id);
+  if (action === 'fullAuto') return startFullAuto(id);
+  if (action === 'stopFullAuto') {await saveRun(id,{fullAuto:null,autopilot:null,fullAutoBlocker:null});return {message:'Full auto stopped. Continue with the steps yourself.'};}
+  // Background checks never open windows; a step you start does.
+  const run = action === 'readResume' && message.response ? (await runs())[id] || {} : ['pollAnswers','autoResume'].includes(action) ? await getRun(id) : await ensureRun(id);
+  // A step you take yourself after Full auto stopped clears its "needs you" notice.
+  if (run.fullAutoBlocker && !['pollAnswers','autoResume'].includes(action)) await saveRun(id,{fullAutoBlocker:null});
   if (action === 'extract') {
     await requireReady(run);
     const found = await page(run.jobTabId,'job');

@@ -28,10 +28,14 @@ function setStep(step) {
   document.querySelectorAll('[data-recovery-for]').forEach(control=>{control.hidden=control.dataset.recoveryFor!==step;});
   updateStepButtons();
 }
+// Where Full auto handed the application back to you.
+const BLOCKED_STEP={pages:'job',resume:'resume',questions:'questions'};
+const blockedStep=()=>BLOCKED_STEP[run.fullAutoBlocker?.stage] || null;
 function recommendedStep() {
   if(!state?.client)return 'connection';
   if(!selected)return 'job';
   if(selected.status==='completed')return 'finish';
+  if(blockedStep())return blockedStep();
   if(run.pendingResumeResponse)return 'resume';
   if(selected.files?.docx || run.fields?.length)return 'questions';
   if(selected.jd || run.responseMonitor?.kind==='resume')return 'resume';
@@ -187,6 +191,7 @@ async function loadDetail() {
   $('local-facts').textContent = Object.entries(facts).filter(([,value]) => value !== '').map(([key,value]) => `${key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, letter => letter.toUpperCase())}: ${value}`).join('\n');
   $('company').value = selected.company || '';$('job-title').value = selected.title || '';$('jd').value = selected.jd || '';
   $('files').textContent = selected.files ? Object.entries(selected.files).map(([kind,path]) => `${kind.toUpperCase()}: ${path || 'Not written'}`).join('\n') : '';
+  $('stop-full-auto').hidden=!(run.fullAuto?.active || run.autopilot?.active);
   preview();
   if(changedJob || activeStep==='connection')setStep(recommendedStep());
   stepJobId=id;
@@ -208,7 +213,9 @@ function jobPhase(job,jobRun={}) {
   if(monitor?.status==='waiting')return [`Waiting for ChatGPT (${monitor.kind==='resume'?'resume':'answers'})`,'busy'];
   if(monitor?.status==='error')return [`Needs you: ${monitor.message || 'ChatGPT reply could not be read'}`,'attention'];
   if(auto?.active)return ['Auto-filling','busy'];
+  if(jobRun.fullAuto?.active)return ['Full auto running','busy'];
   if(jobRun.pendingResumeResponse)return ['Needs you: confirm the resume, then export','attention'];
+  if(jobRun.fullAutoBlocker)return [`Needs you: ${jobRun.fullAutoBlocker.message}`,'attention'];
   if(jobRun.needsSiteAccess)return ['Needs you: grant site access (Check pages)','attention'];
   return [NEXT_STEPS[job.status] || STATUS_LABELS[job.status] || job.status,'idle'];
 }
@@ -257,12 +264,15 @@ $('adopt').addEventListener('click', () => {
 });
 for (const button of document.querySelectorAll('[data-step]')) button.addEventListener('click', () => {
   const action = button.dataset.step;
-  const permission = action === 'open' ? requestJobAccess(selected && selected.url) : Promise.resolve();
+  // Site access can only be asked for inside the click itself, before any worker call.
+  const permission = action === 'open' ? requestJobAccess(selected && selected.url)
+    : action === 'fullAuto' && selected?.url ? chrome.permissions.request({origins:[new URL(selected.url).origin + '/*']}).catch(() => false) : Promise.resolve();
   perform(async () => {
     await permission;
     if (!selected) throw new Error('Select an assigned job.');
     let extra = {};
     if (action === 'readResume') status('Reading the completed resume from ChatGPT...');
+    if (action === 'fullAuto') status('Full auto is running: reading the JD and sending the resume prompt...');
     if (action === 'sendAnswers') status('Reading dropdown choices and sending questions with their exact options to ChatGPT...');
     if (action === 'sendResume') {
       extra.job = {company:$('company').value.trim(),title:$('job-title').value.trim(),description:$('jd').value.trim()};
@@ -277,6 +287,7 @@ for (const button of document.querySelectorAll('[data-step]')) button.addEventLi
     if(result.needsResumeConfirmation){setStep('resume');showResumeReview(result.responsePreview);$('resume-response-review').scrollIntoView({block:'nearest'});return result;}
     if (action === 'extract') {setStep('resume');$('jd-details').open=true;$('company').value = result.job.company;$('job-title').value = result.job.title;$('jd').value = result.job.description;return {message:result.message || 'JD detected. Review company, title, and description before sending.'};}
     if(action==='sendResume' || action==='sendAnswers'){setStep(action==='sendResume'?'resume':'questions');if(action==='sendResume')$('jd-details').open=false;const detail=await call('detail');run=detail.run;showMonitorStatus();}
+    else if(action==='fullAuto' || action==='stopFullAuto'){await loadDetail();setStep(blockedStep() || (selected?.files?'questions':'resume'));if(result.blocked){status(result.message,true);return null;}}
     else {await loadDetail();if(action==='open' || action==='readResume')setStep(action==='readResume' && selected?.files?'questions':'resume');if(['scan','readAnswers','fill','auto'].includes(action))setStep('questions');}
     return result;
   });
@@ -296,7 +307,7 @@ if (chrome.runtime.onMessage) chrome.runtime.onMessage.addListener(message => {
     return false;
   }
   if(message.event==='fill-progress'){
-    if(selected?.id===message.id)perform(async()=>{await loadDetail();setStep('questions');return {message:message.message};});
+    if(selected?.id===message.id)perform(async()=>{await loadDetail();setStep(blockedStep() || 'questions');const blocked=!!run.fullAutoBlocker;if(blocked)status(message.message,true);return blocked?null:{message:message.message};});
     return false;
   }
   if(message.event==='response-ready'){handleCollectedResponse(message);return false;}

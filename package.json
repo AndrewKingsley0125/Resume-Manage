@@ -1,7 +1,7 @@
 {
   "name": "resume-manage",
   "productName": "Resume Manager",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Electron-based resume manager with multi-profile support",
   "main": "src/main/main.js",
   "author": "Resume Manager",

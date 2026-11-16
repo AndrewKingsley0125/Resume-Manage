@@ -265,7 +265,10 @@ export function runProgress(run={}) {
   if(monitor?.status==='waiting')return {text:monitor.kind==='resume'?'Waiting for ChatGPT to write the resume':'Waiting for ChatGPT to answer the questions',level:'busy',key:'chatgpt-working'};
   if(monitor?.status==='error')return {text:`Needs you: ${monitor.message || 'the ChatGPT reply could not be read'}`,level:'attention',key:'chatgpt-error'};
   if(auto?.active)return {text:`Auto-filling page ${auto.page || 1}`,level:'busy',key:'auto-filling'};
+  if(run.fullAuto?.active)return {text:run.fullAuto.stage==='resume'?'Full auto: preparing the resume':'Full auto: opening the job pages',level:'busy',key:'full-auto'};
   if(run.pendingResumeResponse)return {text:'Needs you: review the resume ChatGPT wrote',level:'attention',key:'confirm-resume'};
+  // Full auto stopped at a step that needs you; that step is back in your hands.
+  if(run.fullAutoBlocker?.message)return {text:`Needs you: ${run.fullAutoBlocker.message}`,level:'attention',key:'full-auto-blocked',stage:run.fullAutoBlocker.stage};
   if(run.needsSiteAccess)return {text:"Needs you: grant site access in the job's Resume Apply window",level:'attention',key:'site-access'};
   if(run.autoOpenError)return {text:`Needs you: ${run.autoOpenError}`,level:'attention',key:'open-error'};
   // ChatGPT's answers (or ones already known) that have not been put on the form yet.

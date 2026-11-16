@@ -221,3 +221,19 @@ test('each job keeps a short history of what happened, for its card in the app',
   assert.deepEqual(events.map(e => e.level),['info','info','info','attention','error','info']);
   assert.ok(events.every(e => typeof e.at === 'number'));
 });
+
+test('Start over removes the job and tells its browser to close its tabs and forget it', async t => {
+  const s = await service(t), one = await s.pair('One');
+  const job = s.bridge.assign('p1','https://example.com/job',one.id);
+  const before = (await s.send('/v1/state',undefined,one.token)).body.cursor;
+  const waiting = s.send('/v1/events?after='+encodeURIComponent(before),undefined,one.token);
+  assert.deepEqual(s.bridge.reset('p1',job.id),{ok:true,url:'https://example.com/job'});
+  // The link is back to Not sent: no job for it any more; the same link can be sent again.
+  assert.equal(s.bridge.dashboard('p1').jobs.some(j => j.id === job.id),false);
+  const woke = await waiting;
+  assert.deepEqual(woke.body.cleanup,[job.id]);assert.notEqual(woke.body.cursor,before);
+  assert.equal((await s.send('/v1/cleanup-done',{jobId:job.id},one.token)).status,200);
+  assert.deepEqual((await s.send('/v1/state',undefined,one.token)).body.cleanup,[]);
+  assert.ok(s.bridge.assign('p1','https://example.com/job',one.id).id);
+  assert.throws(() => s.bridge.reset('p2',job.id), /not found/);
+});

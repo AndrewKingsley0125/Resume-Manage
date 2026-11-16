@@ -15,7 +15,7 @@ async function main() {
   const profile = {id:'chrome-test',firstName:'Fixture',applicationDetails:{country:'United States'},applicationMode:'extension',extensionJobLinks:['http://127.0.0.1:17373/fixture-job'],workHistory:[],education:[]};
   const bridge = createExtensionBridge({getProfiles:()=>[profile],buildPrompt:require('../src/main/prompt').buildPrompt,exportResume:async (profile,response)=>{const resume=Resume.parse(response,profile),docxPath=path.join(temp,'resume.docx');fs.writeFileSync(docxPath,require('../src/main/docx').buildDocx(profile,resume,{}));return {resume,files:{path:'fixture.pdf',docxPath,jdPath:'JD.txt'}};}});
   let child, socket;
-  const jobHtml = `<!doctype html><html><head><title>Engineer at Acme</title><script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Acme"},"description":"Build reliable systems."}</script></head><body><form><label for="first">First name</label><input id="first"><label for="why">Why our company?</label><textarea id="why"></textarea><label for="resume">Resume / CV</label><input id="resume" name="resume" type="file" accept=".docx"><label for="cover">Cover letter</label><input id="cover" name="cover_letter" type="file"><button type="submit">Submit</button></form><script>globalThis.submitted=false;document.querySelector('form').onsubmit=e=>{e.preventDefault();submitted=true;};</script></body></html>`;
+  const jobHtml = `<!doctype html><html><head><title>Engineer at Acme</title><script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Acme"},"description":"Build reliable systems. You will design, ship and operate backend services used by millions of customers, work closely with product and design, review code, mentor other engineers, and improve monitoring, testing and deployment across the platform team."}</script></head><body><form><label for="first">First name</label><input id="first"><label for="why">Why our company?</label><textarea id="why"></textarea><label for="resume">Resume / CV</label><input id="resume" name="resume" type="file" accept=".docx"><label for="cover">Cover letter</label><input id="cover" name="cover_letter" type="file"><button type="submit">Submit</button></form><script>globalThis.submitted=false;document.querySelector('form').onsubmit=e=>{e.preventDefault();submitted=true;};</script></body></html>`;
   const baseFixtureJobHtml=jobHtml.replace('<label for="resume">','<label for="country">Country</label><input id="country" class="cx-select-input" role="combobox" aria-haspopup="grid" aria-expanded="false" aria-controls="country-options"><label for="resume">')
     .replace('globalThis.submitted=false;',`globalThis.submitted=false;const country=document.querySelector('#country');country.onclick=()=>{let list=document.querySelector('#country-options');if(!list){list=document.createElement('div');list.id='country-options';list.className='cx-select__list';list.setAttribute('role','grid');for(const label of ['United States of America','Canada']){const row=document.createElement('div');row.setAttribute('role','row');const option=document.createElement('div');option.className='cx-select__list-item';option.setAttribute('role','gridcell');option.setAttribute('aria-selected','false');option.textContent=label;option.onclick=()=>{country.value=label;option.setAttribute('aria-selected','true');country.setAttribute('aria-expanded','false');list.hidden=true;};row.append(option);list.append(row);}document.body.append(list);}list.hidden=false;country.setAttribute('aria-expanded','true');};country.onkeydown=event=>{if(event.key==='Escape'){if(country.getAttribute('aria-expanded')==='false'){country.value='';return;}const list=document.querySelector('#country-options');if(list)list.hidden=true;country.setAttribute('aria-expanded','false');}};`);
   const fixtureJobHtml=baseFixtureJobHtml.replace("country.onkeydown=event=>","country.oninput=country.onclick;country.onkeydown=event=>");
@@ -151,8 +151,23 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     assert.equal(shown.lastCommand.action,'open','showing the window succeeded and leaves no result line');
     assert.equal((await evaluate(`chrome.tabs.get(${live.run.jobTabId})`)).active,true);
     console.log("PASS: clicking a job's card in the app runs the show-window step in its browser.");
-    const extracted=await evaluate(`chrome.runtime.sendMessage({action:'extract',id:${JSON.stringify(job.id)}})`);assert.equal(extracted.job.company,'Acme');
-    const sent=await evaluate(`chrome.runtime.sendMessage({action:'sendResume',id:${JSON.stringify(job.id)},job:${JSON.stringify(extracted.job)}})`);assert.equal(sent.ok,true,JSON.stringify(sent));assert.match(sent.message,/Resume prompt sent/);
+    // Start over on a second job: its tabs close and its browser reports the clean-up.
+    profile.extensionJobLinks.push('http://127.0.0.1:17373/fixture-restart');
+    const restart=bridge.assign(profile.id,'http://127.0.0.1:17373/fixture-restart',connection.id);
+    let restartRun;
+    for(let i=0;i<100;i++){restartRun=(await evaluate(`chrome.runtime.sendMessage({action:'state'})`))?.runs?.[restart.id];if(restartRun?.jobTabId)break;await delay(100);}
+    assert.ok(restartRun?.jobTabId,JSON.stringify(restartRun));
+    bridge.reset(profile.id,restart.id);
+    let restartTabs=1;
+    for(let i=0;i<100;i++){restartTabs=await evaluate(`chrome.tabs.query({}).then(tabs=>tabs.filter(t=>[${restartRun.jobTabId},${restartRun.chatTabId}].includes(t.id)).length)`);if(!restartTabs && (await evaluate(`chrome.runtime.sendMessage({action:'state'})`))?.runs?.[restart.id]===undefined)break;await delay(100);}
+    assert.equal(restartTabs,0,'its tabs are closed');
+    assert.equal(bridge.dashboard(profile.id).jobs.some(j=>j.id===restart.id),false);
+    let forgotten;for(let i=0;i<30;i++){const st=await evaluate(`chrome.runtime.sendMessage({action:'state'})`);if(st?.runs){forgotten=st.runs[restart.id];break;}await delay(100);}
+    assert.equal(forgotten,undefined,'its run is forgotten');
+    console.log("PASS: Start over closes the job's tabs and puts it back to Not sent.");
+    // Full auto reads the JD and sends the resume prompt by itself.
+    const sent=await evaluate(`chrome.runtime.sendMessage({action:'fullAuto',id:${JSON.stringify(job.id)}})`);assert.equal(sent.ok,true,JSON.stringify(sent));assert.match(sent.message,/Resume prompt sent/);
+    assert.equal(bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).company,'Acme');
     // If the long request is omitted entirely, require human confirmation instead of blocking export.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.chatTabId}},func:()=>{const user=[...document.querySelectorAll('[data-message-author-role="user"]')].at(-1);user.textContent='Virtualized long request';}})`);
     await delay(1000);
@@ -161,10 +176,13 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     let collected;
     for(let attempt=0;attempt<30;attempt++) {
       collected=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
-      if(collected.run.responseMonitor?.status==='ready' && collected.run.pendingResumeResponse)break;
+      if(collected.run.responseMonitor?.status==='ready' && collected.run.pendingResumeResponse && collected.run.fullAutoBlocker)break;
       await delay(500);
     }
     assert.equal(collected.run.responseMonitor?.status,'ready',JSON.stringify(collected.run.responseMonitor));
+    // The reply could not be matched to its request, so Full auto hands the resume back for review.
+    assert.equal(collected.run.fullAutoBlocker?.stage,'resume',JSON.stringify(collected.run.fullAutoBlocker));assert.ok(!collected.run.fullAuto?.active);
+    console.log('PASS: Full auto sends the resume prompt and stops at Resume when the reply needs review.');
     const review={responsePreview:collected.run.pendingResumeResponse};
     assert.ok(review.responsePreview);assert.ok(!bridge.dashboard().jobs[0].exported);
     assert.doesNotMatch(review.responsePreview,/Iterate|Copy code/);assert.equal(JSON.parse(review.responsePreview).company,'Acme');
@@ -172,6 +190,7 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     const unapproved=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:false})`);assert.ok(unapproved.error);
     const exported=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:true})`);
     assert.equal(exported.ok,true,JSON.stringify(exported));assert.equal(exported.job.files.pdf,'fixture.pdf');
+    assert.equal((await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run.fullAutoBlocker,null,'confirming it yourself clears the Full auto notice');
     console.log('PASS: streaming resume JSON is collected automatically only after completion, then exported only after manual confirmation.');
     const scanned=await evaluate(`chrome.runtime.sendMessage({action:'scan',id:${JSON.stringify(job.id)}})`);assert.equal(scanned.ok,true,JSON.stringify(scanned));
     const uploadScan=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);

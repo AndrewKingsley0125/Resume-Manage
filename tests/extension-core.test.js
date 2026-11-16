@@ -337,6 +337,10 @@ test('each job summarizes what it is doing now for the app', async () => {
   assert.equal(runProgress({responseMonitor:{kind:'answers',status:'error',message:'Timed out'}}).text,'Needs you: Timed out');
   assert.deepEqual(runProgress({autopilot:{active:true,page:2}}),{text:'Auto-filling page 2',level:'busy',key:'auto-filling'});
   assert.equal(runProgress({pendingResumeResponse:'{}'}).key,'confirm-resume');
+  assert.deepEqual(runProgress({fullAuto:{active:true,stage:'resume'}}),{text:'Full auto: preparing the resume',level:'busy',key:'full-auto'});
+  assert.equal(runProgress({fullAuto:{active:true,stage:'resume'},responseMonitor:{kind:'resume',status:'waiting'}}).key,'chatgpt-working');
+  assert.equal(runProgress({fullAutoBlocker:{stage:'resume',message:'Review it.'},pendingResumeResponse:'{}'}).key,'confirm-resume');
+  assert.deepEqual(runProgress({fullAutoBlocker:{stage:'resume',message:'No job description was found on the page.'}}),{text:'Needs you: No job description was found on the page.',level:'attention',key:'full-auto-blocked',stage:'resume'});
   assert.deepEqual(runProgress({autoSummary:{text:'Form filled. Check it, then submit it yourself.',needsYou:false}}),{text:'Form filled. Check it, then submit it yourself.',level:'idle',key:'auto-finished'});
   // Waiting on the user outranks everything else.
   assert.equal(runProgress({autopilot:{active:true,waiting:'login'},responseMonitor:{kind:'answers',status:'waiting'}}).level,'attention');

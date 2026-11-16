@@ -35,13 +35,6 @@
     unsent: `${ROW_BASE} job-unsent [&>td:first-child]:shadow-[inset_4px_0_0_var(--border)]`,
     done: `${ROW_BASE} job-done opacity-60 [&>td:first-child]:shadow-[inset_4px_0_0_var(--border)]`,
   };
-  const GROUP_HEAD_CLASS = {
-    attention: 'ext-group-head text-attention-ink',
-    busy: 'ext-group-head text-busy',
-    idle: 'ext-group-head text-ready-ink',
-    unsent: 'ext-group-head text-muted',
-    done: 'ext-group-head text-muted',
-  };
   // Column widths, on both the heading and the cells.
   const COLUMN_CLASS = {
     'col-site': 'col-site w-[1%] whitespace-nowrap',
@@ -90,10 +83,14 @@
   const statusLabel = status => STATUS_LABELS[status] || String(status || '').replace(/-/g, ' ');
   const NEXT_STEPS = {'assigned':'Opening in Chrome','tabs-opened':'Next: Detect JD, then Send to ChatGPT','tabs-ready':'Next: Detect JD, then Send to ChatGPT','jd-received':'Next: send the resume prompt to ChatGPT','resume-exported':'Next: Auto-fill','questions-scanned':'Next: Ask ChatGPT or Auto-fill','answers-reviewed':'Next: Fill form or Auto-fill','filled':'Next: check the form and submit it yourself'};
   // What a sent job is doing now, as its Resume Apply tab reports it: [text, level].
+  // Whether the browser running a job is connected right now.
+  const browserOnline = job => !!(liveState && liveState.connections.some(c => c.id === job.connectionId && c.connected));
   function jobState(job) {
     if (['completed','unlinked'].includes(job.status)) return [statusLabel(job.status), 'done'];
     if (job.error) return [`Needs you: ${job.error}`, 'attention'];
     const progress = job.progress || {};
+    // Nothing can be running while its browser is offline: don't show old progress as work.
+    if (liveState && !browserOnline(job) && (progress.level === 'busy' || (job.commands || []).length)) return ['Paused: Chrome is offline. Open Chrome to continue.', 'attention'];
     if (progress.text) return [progress.text, progress.level || 'idle'];
     return [NEXT_STEPS[job.status] || statusLabel(job.status), 'idle'];
   }
@@ -165,18 +162,18 @@
   }
   // Steps the app can start for a job that is open in Chrome. Its browser runs each one
   // exactly like the same button in the job's Resume Apply window, and reports back here.
-  const COMMAND_LABELS = {open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', scan:'Scan questions', ask:'Ask ChatGPT', auto:'Auto-fill', fill:'Fill form', complete:'Mark ended', details:'Show details in Chrome', focus:'Show in Chrome', review:'Review resume'};
-  const COMMAND_HINTS = {open:'Reopen or rearrange the job window, ChatGPT and its Resume Apply window', prepare:"Read the job description from the job page and send the resume prompt to this job's ChatGPT", confirmResume:'Export the resume ChatGPT wrote (PDF and DOCX)', scan:'Read the questions on the application page', ask:'Send the unanswered questions to ChatGPT', auto:'Fill the application page by page; it stops before Submit', fill:"Put ChatGPT's answers on this page of the form. Nothing is submitted.", complete:'Mark this application ended (after you submitted or abandoned it)'};
+  const COMMAND_LABELS = {open:'Reopen windows', fullAuto:'Full auto', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', scan:'Scan questions', ask:'Ask ChatGPT', auto:'Auto-fill', fill:'Fill form', complete:'Mark ended', details:'Show details in Chrome', focus:'Show in Chrome', review:'Review resume'};
+  const COMMAND_HINTS = {open:'Reopen or rearrange the job window, ChatGPT and its Resume Apply window', fullAuto:'Do every step by itself: read the JD, write and export the resume, then fill the application. It stops at the first step that needs you and never clicks Submit.', prepare:"Read the job description from the job page and send the resume prompt to this job's ChatGPT", confirmResume:'Export the resume ChatGPT wrote (PDF and DOCX)', scan:'Read the questions on the application page', ask:'Send the unanswered questions to ChatGPT', auto:'Fill the application page by page; it stops before Submit', fill:"Put ChatGPT's answers on this page of the form. Nothing is submitted.", complete:'Mark this application ended (after you submitted or abandoned it)'};
   // Only the steps that make sense where the job is now. Nothing while it is working by
   // itself or waiting for you on the job page.
   function availableSteps(job) {
     const key = (job.progress && job.progress.key) || '';
-    if (['chatgpt-working','auto-filling','waiting-on-page'].includes(key)) return [];
+    if (['chatgpt-working','auto-filling','waiting-on-page','full-auto'].includes(key)) return [];
     if (key === 'confirm-resume') return ['review'];
     if (key === 'answers-ready') return ['fill','ask'];
     if (['open-error','site-access'].includes(key)) return ['open'];
     switch (job.status) {
-      case 'tabs-opened': case 'tabs-ready': case 'jd-received': return ['prepare'];
+      case 'tabs-opened': case 'tabs-ready': case 'jd-received': return ['fullAuto','prepare'];
       case 'resume-exported': return ['auto','scan'];
       case 'questions-scanned': return ['auto','ask'];
       case 'answers-reviewed': case 'filled': return ['auto'];
@@ -200,12 +197,30 @@
     });
     return button;
   }
+  // Start over: back to Not sent at stage 1, its Chrome tabs closed and its progress cleared.
+  function startOverItem(job, menu, toggle) {
+    const item = el('button', MENU_ITEM_CLASS.normal, 'Start over');item.type = 'button';item.setAttribute('role', 'menuitem');item.dataset.action = 'reset';
+    item.title = 'Stop this job, close its Chrome tabs, clear its progress, and put it back to Not sent';
+    item.addEventListener('click', async event => {
+      event.stopPropagation();
+      openMenuJobId = null;menu.hidden = true;toggle.setAttribute('aria-expanded', 'false');
+      if (!confirm(`Start "${jobName(job)}" over? This stops it, closes its Chrome tabs, clears its progress and history, and puts it back to Not sent.`)) return;
+      const active = token;
+      try {
+        await window.api.extensionReset({profileId:currentProfile.id, jobId:job.id});
+        if (selectedJobId === job.id) selectedJobId = null;
+        if (active === token) {$('extension-dispatch-status').textContent = `${jobName(job)} is back to Not sent.`;await refreshConnections();}
+      } catch (error) {if (active === token) $('extension-dispatch-status').textContent = error.message;}
+    });
+    return item;
+  }
   function jobMenu(job) {
     const wrap = el('div', 'job-menu-wrap relative flex-none');
     const toggle = el('button', 'btn btn-ghost btn-sm job-menu-button px-2.5 py-[5px] text-base leading-none tracking-[1px]', '⋯');toggle.type = 'button';
     toggle.title = 'More for this job';toggle.setAttribute('aria-label', `More for ${jobName(job)}`);toggle.setAttribute('aria-haspopup', 'menu');
     const menu = el('div', 'job-menu absolute right-0 top-[calc(100%+4px)] z-[5] flex min-w-[200px] flex-col rounded-[10px] border border-line bg-elev p-1.5 shadow-soft');menu.setAttribute('role', 'menu');
-    for (const action of ['details', 'open', 'complete']) {
+    for (const action of ['details', 'open', 'reset', 'complete']) {
+      if (action === 'reset') {menu.append(startOverItem(job, menu, toggle));continue;}
       const item = commandButton(job, action, false);item.className = MENU_ITEM_CLASS[action === 'complete' ? 'danger' : 'normal'];item.setAttribute('role', 'menuitem');
       item.addEventListener('click', () => {openMenuJobId = null;menu.hidden = true;toggle.setAttribute('aria-expanded', 'false');});
       menu.append(item);
@@ -388,7 +403,7 @@
   function lane(job) {
     if (!job) return 'unsent';
     if (!isOpen(job)) return 'done';
-    if ((job.commands || []).length) return 'busy';
+    if ((job.commands || []).length && browserOnline(job)) return 'busy';
     const level = jobState(job)[1];
     return level === 'attention' ? 'attention' : level === 'busy' ? 'busy' : 'idle';
   }
@@ -433,19 +448,20 @@
       const th = el('th', `${COLUMN_CLASS[className]} sticky top-0 z-[1] whitespace-nowrap border-b border-line bg-elev px-2.5 py-2.5 text-left text-[11px] font-bold uppercase tracking-[0.05em] text-muted first:rounded-tl-card last:rounded-tr-card`, name);th.scope = 'col';headRow.append(th);
     }
     head.append(headRow);table.append(head);
-    const COLUMNS = 7;
     let rows = 0;
+    // All: every job in a fixed place (the order the links were added), so a row never
+    // jumps when its state changes; its coloured edge and status show the state.
+    if (filter === 'all') {
+      const body = el('tbody', 'ext-all');
+      body.append(...links.map(link => jobCard(link, sentJob(link))));
+      table.append(body);rows = links.length;
+    }
     for (const [key, title] of GROUPS) {
-      if (filter !== 'all' && filter !== key) continue;
+      if (filter === 'all') break;
+      if (filter !== key) continue;
       const items = groups[key];
       if (!items.length) continue;
       const body = el('tbody', GROUP_CLASS[key]);
-      if (filter === 'all') {
-        const groupRow = el('tr', 'ext-group-row');
-        const th = el('th', `${GROUP_HEAD_CLASS[key]} border-b border-line bg-bg px-3 pb-1.5 pt-2 text-left text-[11px] font-bold uppercase tracking-[0.06em]`);th.colSpan = COLUMNS;th.scope = 'rowgroup';
-        th.append(el('span', 'ext-group-title', title), el('span', 'ext-group-count ml-1.5 rounded-full border border-line bg-elev px-[7px] tracking-normal', String(items.length)));
-        groupRow.append(th);body.append(groupRow);
-      }
       body.append(...items.map(([link, job]) => jobCard(link, job)));
       table.append(body);rows += items.length;
     }

@@ -12,6 +12,17 @@ Standalone Chrome extension with a side-panel workspace and automatic job openin
 
 The app accepts up to eight linked extension installations/Chrome profiles in total. Each extension receives only jobs assigned to it. A Chrome profile normally has one installation of this extension; use different Chrome profiles for separate instances.
 
+## Full auto
+
+Click **Full auto** in the Job step of a job's Resume Apply window, or on the job's card in the app. It runs every step by itself:
+
+1. Reopens the job and ChatGPT tabs if they were closed, and checks the pages are ready. From the panel it asks for site access in the same click.
+2. Reads the JD. It keeps a JD you already sent, if there is one. Then it sends the resume prompt to ChatGPT.
+3. When ChatGPT finishes, exports the resume, but only if the reply is certainly this job's reply.
+4. Runs **Auto-fill application**: uploads resume.docx, answers questions, and clicks Next page by page. It pauses for CAPTCHA, sign-in and emailed codes, then continues when you finish them.
+
+At the first blocker it stops, opens that step in the panel, and shows the reason. The app shows the same reason as "Needs you: …". Blockers include: no site access, a missing or short JD (under 200 characters), ChatGPT not signed in or timing out, a resume reply that cannot be matched to this job, or an export failure. You can finish that step with the normal buttons, which clears the notice, or fix the problem and click Full auto again. It continues from where the job is. Auto-fill's own stops still apply: required fields it cannot fill, consent and signature controls, and the last page. Full auto never clicks Submit. **Stop full auto** cancels it.
+
 ## Manual application workflow
 
 1. After **Send to extension** in the app, the extension automatically opens the job site and ChatGPT in native split view within one Chrome window. Its controls stay in the side panel; no separate extension tab is opened. Click **Check pages / grant site access** once to grant Chrome access to a new job-site origin. Before scanning, the extension waits for both tabs to finish loading and settle. Sign into ChatGPT or finish any site verification yourself, then retry if needed.

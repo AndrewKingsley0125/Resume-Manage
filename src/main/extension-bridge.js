@@ -48,7 +48,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
   const safeConnection = c => ({id:c.id, name:c.name, connected:c.lastSeen > 0 && now() - c.lastSeen < 90000, lastSeen:c.lastSeen, pairedAt:c.pairedAt || null, profileId:c.profileId || null});
   const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at})), lastCommand:job.lastCommand || null});
   // Steps the app can start for a job; its extension runs them and reports back.
-  const COMMANDS = ['open','prepare','confirmResume','auto','scan','ask','fill','complete','focus','details'];
+  const COMMANDS = ['open','fullAuto','prepare','confirmResume','auto','scan','ask','fill','complete','focus','details'];
   const pendingCommands = job => (job.commands || []).filter(c => !c.done);
   const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Mark ended'};
   const STATUS_EVENTS = {'tabs-opened':'Job window opened', 'tabs-ready':'Job page and ChatGPT ready', 'questions-scanned':'Questions scanned', 'answers-reviewed':'Answers approved for filling', 'filled':'Answers filled on the form'};
@@ -109,6 +109,20 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     job.commands = [...pendingCommands(job), entry];persist();
     for (const finish of [...(eventWaiters.get(client.id) || [])]) finish();
     return summary(job);
+  }
+  // Start over: the job is removed, so its link is back to "Not sent". The job's browser is
+  // told to close its tabs and forget it, now or the next time it connects.
+  function reset(profileId, jobId) {
+    const job = state.jobs.find(j => j.id === jobId && j.profileId === profileId);
+    if (!job) throw fail('Job not found.', 404);
+    if (busy.has(job.id)) throw fail('This job is exporting its resume. Try again in a moment.', 409);
+    state.jobs = state.jobs.filter(j => j !== job);
+    if (state.connections.some(c => c.id === job.connectionId)) {
+      state.cleanup = [...(state.cleanup || []).filter(item => item.jobId !== job.id), {jobId:job.id, connectionId:job.connectionId, at:now()}];
+    }
+    persist();
+    for (const finish of [...(eventWaiters.get(job.connectionId) || [])]) finish();
+    return {ok:true, url:job.url};
   }
   function unlink(id) {
     state.connections = state.connections.filter(c => c.id !== id);
@@ -224,7 +238,9 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     // The extension shows which profile this browser runs.
     // The cursor changes when a job is assigned or a command is queued, so a waiting extension wakes.
     const queued = jobs.flatMap(j => pendingCommands(j).map(c => c.id)).join(',');
-    return {client:{...safeConnection(client),profileName:profileName(client.profileId)},jobs:jobs.map(summary),cursor:(jobs.at(-1)?.id || '') + (queued ? '|' + queued : '')};
+    const cleanup = (state.cleanup || []).filter(item => item.connectionId === client.id).map(item => item.jobId);
+    return {client:{...safeConnection(client),profileName:profileName(client.profileId)},jobs:jobs.map(summary),cleanup,
+      cursor:(jobs.at(-1)?.id || '') + (queued ? '|' + queued : '') + (cleanup.length ? '|x' + cleanup.join(',') : '')};
   }
   function waitForAssignment(client, res) {
     return new Promise(resolve => {
@@ -260,6 +276,11 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       if (req.url === '/v1/pair' && req.method === 'POST') return reply(200, pair(body, origin));
       const client = authenticate(req, origin);
       if (req.url === '/v1/state' && req.method === 'GET') return reply(200, clientState(client));
+      // The browser closed a started-over job's tabs and forgot it.
+      if (req.url === '/v1/cleanup-done' && req.method === 'POST') {
+        state.cleanup = (state.cleanup || []).filter(item => !(item.connectionId === client.id && item.jobId === body.jobId));
+        persist();return reply(200, {ok:true});
+      }
       const eventUrl = new URL(req.url,'http://127.0.0.1');
       if (eventUrl.pathname === '/v1/events' && req.method === 'GET') {
         const cursor = eventUrl.searchParams.get('after') || '';
@@ -285,6 +306,6 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return server && server.address();
   }
   async function stop() {if (server) {const current = server;server = null;current.closeAllConnections();await new Promise(resolve => current.close(resolve));}}
-  return {start, stop, dashboard, assign, unlink, rotateCode, command};
+  return {start, stop, dashboard, assign, unlink, rotateCode, command, reset};
 }
 module.exports = { createExtensionBridge, PORT };

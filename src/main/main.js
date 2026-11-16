@@ -1316,6 +1316,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('extension:unlink', (_event, id) => extensionBridge.unlink(id));
   ipcMain.handle('extension:assign', (_event, args) => extensionBridge.assign(args.profileId, args.url, args.connectionId, args.style));
   ipcMain.handle('extension:command', (_event, args) => extensionBridge.command(args.profileId, args.jobId, args.action));
+  ipcMain.handle('extension:reset', (_event, args) => extensionBridge.reset(args.profileId, args.jobId));
 
   ipcMain.handle('prompt:generate', (_event, profileId) => {
     const profile = readProfiles().find(p => p.id === profileId);

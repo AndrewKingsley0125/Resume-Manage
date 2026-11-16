@@ -255,11 +255,21 @@ app.whenReady().then(async () => {
     // With the browser online, the connection notice stays out of the way.
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-bridge-notice").hidden'),true);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-attention").textContent'),'1');
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-group.is-attention .job-card .job-card-title").textContent'),'Staff Engineer');
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-group.is-attention .ext-group-count").textContent'),'1');
+    // All: one list in a fixed order (no state headings, so rows never jump); the row's state shows on it.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .ext-group-row").length'),0);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list tbody.ext-all .job-card.job-attention .job-card-title").textContent'),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-attention").textContent'),'1');
     // Saved jobs are one table with these columns.
     assert.deepEqual(await manager.webContents.executeJavaScript('[...document.querySelectorAll("#extension-job-list .ext-table thead th")].map(th=>th.textContent)'),['Job site','Company','Title','Process','Status','Actions','']);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .job-card").tagName'),'TR');
+    // A job left 'working' from before, whose browser is now offline, shows as paused, not as working.
+    const savedJob={...bridgeState.jobs[0]};
+    bridgeState.connections[0]={...bridgeState.connections[0],connected:false};
+    bridgeState.jobs[0]={...savedJob,progress:{text:'Auto-filling page 2',level:'busy',key:'auto-filling',at:Date.now()}};
+    await wait(manager,`/^Paused: Chrome is offline/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"] .job-card-state')?.textContent||'')`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-busy").textContent'),'0');
+    bridgeState.connections[0]={...bridgeState.connections[0],connected:true};bridgeState.jobs[0]=savedJob;
+    await wait(manager,`/^Needs you: solve the CAPTCHA/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"] .job-card-state')?.textContent||'')`);
     // Filter tabs show one group at a time; All brings everything back.
     await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="unsent"]').click()`);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card").length'),0);
@@ -295,13 +305,13 @@ app.whenReady().then(async () => {
     // Reopen, details and end sit in the card's menu, closed until asked for.
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
-    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Mark ended');
+    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Start over,Mark ended');
     // Clicking elsewhere closes it.
     await manager.webContents.executeJavaScript('document.querySelector("#extension-job-count").click()');
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
     const tinyPng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
     bridgeState.jobs[0]={...bridgeState.jobs[0],page:{title:'Acme - Staff Engineer',icon:tinyPng},progress:{text:'',level:'idle',key:'',at:Date.now()}};
-    await wait(manager,`${stepButtons}==="prepare"`);
+    await wait(manager,`${stepButtons}==="fullAuto,prepare"`);
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-avatar img").src.startsWith("data:image/png")`),true);
     bridgeState.jobs[0]={...bridgeState.jobs[0],status:'resume-exported'};
     await wait(manager,`${stepButtons}==="auto,scan"`);
