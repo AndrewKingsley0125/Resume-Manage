@@ -8,27 +8,27 @@
     />
     <title>Resume Manager</title>
     <script src="theme-init.js"></script>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="tailwind.css" />
   </head>
   <body data-view="list">
-    <header class="topbar">
-      <div class="brand">
-        <img class="brand-mark" src="assets/logo.png" alt="" />
+    <header class="topbar flex items-center justify-between gap-4 px-10 pb-2 pt-7">
+      <div class="brand flex items-center gap-3.5">
+        <img class="brand-mark h-11 w-11 shrink-0 drop-shadow-[0_6px_14px_rgba(70,90,255,0.35)]" src="assets/logo.png" alt="" />
         <div>
-          <h1>Resume Manager</h1>
-          <p id="subtitle" class="subtitle">Choose a profile to continue</p>
+          <h1 class="m-0 text-xl font-semibold tracking-[0.2px]">Resume Manager</h1>
+          <p id="subtitle" class="subtitle mt-0.5 text-[13px] text-muted">Choose a profile to continue</p>
         </div>
       </div>
-      <div class="topbar-actions">
+      <div class="topbar-actions flex items-center gap-2.5">
         <button
           id="theme-toggle"
-          class="btn btn-ghost btn-icon theme-toggle"
+          class="btn btn-ghost btn-icon theme-toggle h-[38px] w-[38px] p-0"
           type="button"
           aria-label="Toggle theme"
           title="Toggle light / dark theme"
         >
-          <span class="icon" data-show="light" aria-hidden="true">☀</span>
-          <span class="icon" data-show="dark" aria-hidden="true">☾</span>
+          <span class="icon inline-flex h-[18px] w-[18px] items-center justify-center [:root[data-theme='light']_&]:[display:none]" data-show="light" aria-hidden="true">☀</span>
+          <span class="icon h-[18px] w-[18px] items-center justify-center [display:none] [:root[data-theme='light']_&]:inline-flex" data-show="dark" aria-hidden="true">☾</span>
         </button>
         <button id="back-btn" class="btn btn-ghost only-workspace" type="button">
           ← Profiles
@@ -49,37 +49,107 @@
         >
           Restore
         </button>
+        <button id="discovery-btn" class="btn btn-ghost only-list" type="button" title="Find jobs from company job boards, ranked for each profile">
+          Find jobs
+        </button>
         <button id="new-profile-btn" class="btn btn-primary only-list">
-          <span class="plus">+</span> New profile
+          <span class="plus mr-0.5 text-lg leading-none">+</span> New profile
         </button>
       </div>
     </header>
 
-    <main class="content">
+    <main class="content px-10 pb-[60px] pt-6">
       <!-- LIST VIEW -->
-      <section id="list-view" class="view">
-        <section id="grid" class="grid" aria-label="Profiles">
+      <section id="list-view" class="view w-full">
+        <section id="grid" class="grid mx-auto max-w-[1200px] grid-cols-[repeat(auto-fit,200px)] justify-center gap-5" aria-label="Profiles">
           <!-- Profile tiles render here -->
         </section>
 
-        <div id="empty-state" class="empty-state hidden">
-          <div class="empty-illustration">+</div>
-          <h2>No profiles yet</h2>
-          <p>Create your first profile to start managing resumes.</p>
+        <div id="empty-state" class="empty-state hidden mx-auto mt-[60px] max-w-[420px] text-center text-muted">
+          <div class="empty-illustration mx-auto flex h-20 w-20 items-center justify-center rounded-3xl border border-dashed border-line bg-elev text-[44px] text-muted">+</div>
+          <h2 class="mb-1.5 mt-3 text-2xl font-bold text-ink">No profiles yet</h2>
+          <p class="my-4">Create your first profile to start managing resumes.</p>
           <button id="empty-create-btn" class="btn btn-primary">
             Create profile
           </button>
         </div>
       </section>
 
+      <!-- JOB DISCOVERY VIEW -->
+      <section id="discovery-view" class="view" aria-labelledby="discovery-heading">
+        <header class="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 id="discovery-heading" class="my-5 text-2xl font-bold">Find jobs</h2>
+            <p class="muted small mt-3">Jobs from company job boards (Greenhouse, Lever, Ashby), ranked for each profile. Sending a job opens it in the Chrome extension; you still review answers and submit yourself.</p>
+          </div>
+        </header>
+        <div class="discovery-layout mb-6 grid grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)] items-start gap-6 max-[1000px]:grid-cols-1">
+          <section class="extension-panel min-w-0 rounded-card border border-line bg-elev p-6" aria-labelledby="discovery-sources-heading">
+            <h3 id="discovery-sources-heading" class="mb-[1em] text-[1.17em] font-bold">Job sources</h3>
+            <div class="discovery-metrics grid grid-cols-2 gap-3">
+              <div class="flex flex-col gap-1.5 rounded-lg border border-line p-3.5"><strong id="discovery-boards" class="text-2xl tabular-nums">0</strong><span class="text-xs text-muted">Company boards</span></div>
+              <div class="flex flex-col gap-1.5 rounded-lg border border-line p-3.5"><strong id="discovery-jobs" class="text-2xl tabular-nums">0</strong><span class="text-xs text-muted">Open jobs</span></div>
+              <div class="flex flex-col gap-1.5 rounded-lg border border-line p-3.5"><strong id="discovery-new" class="text-2xl tabular-nums">0</strong><span class="text-xs text-muted">New in 24 hours</span></div>
+              <div class="flex flex-col gap-1.5 rounded-lg border border-line p-3.5"><strong id="discovery-verified" class="text-2xl tabular-nums">0</strong><span class="text-xs text-muted">Verified postings</span></div>
+            </div>
+            <p id="discovery-last" class="muted small mt-3"></p>
+            <div class="discovery-actions mb-1 mt-4 flex flex-wrap gap-2">
+              <button id="discovery-sync" class="btn btn-primary" type="button">Collect jobs</button>
+              <button id="discovery-find" class="btn btn-ghost" type="button" title="Search the free Common Crawl index for more company boards. Slow; it continues where it stopped.">Find more boards</button>
+              <button id="discovery-stop" class="btn btn-ghost" type="button" hidden>Stop</button>
+            </div>
+            <p id="discovery-progress" class="muted small mt-3" role="status" aria-live="polite"></p>
+            <label class="field-label mb-1.5 block" for="discovery-board-url">Add a company board or job link</label>
+            <div class="flex items-stretch gap-2">
+              <input id="discovery-board-url" class="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-[9px] text-[13px] text-ink outline-none placeholder:text-muted focus:border-accent focus:ring-[3px] focus:ring-accent-ring" type="url" placeholder="https://jobs.lever.co/company" spellcheck="false" />
+              <button id="discovery-add-board" class="btn btn-ghost shrink-0" type="button">Add</button>
+            </div>
+            <p id="discovery-board-status" class="muted small mt-3" role="status"></p>
+          </section>
+          <section class="extension-panel min-w-0 rounded-card border border-line bg-elev p-6" aria-labelledby="discovery-search-heading">
+            <h3 id="discovery-search-heading" class="mb-[1em] text-[1.17em] font-bold">Search for</h3>
+            <label class="field-label mb-1.5 block" for="discovery-profile">Profile</label>
+            <select id="discovery-profile" class="select discovery-profile mb-3.5 w-full"></select>
+            <label class="field-label mb-1.5 block" for="discovery-titles">Target job titles, one per line</label>
+            <textarea id="discovery-titles" class="mb-3.5 block w-full resize-y rounded-lg border border-line bg-bg px-3 py-2.5 text-sm leading-normal text-ink outline-none focus:border-accent focus:ring-[3px] focus:ring-accent-ring" rows="4" spellcheck="false"></textarea>
+            <label class="field-label mb-1.5 block" for="discovery-skills">Core skills, separated by commas</label>
+            <textarea id="discovery-skills" class="mb-3.5 block w-full resize-y rounded-lg border border-line bg-bg px-3 py-2.5 text-sm leading-normal text-ink outline-none focus:border-accent focus:ring-[3px] focus:ring-accent-ring" rows="4" spellcheck="false"></textarea>
+            <div class="discovery-filters grid grid-cols-3 gap-3 max-[1000px]:grid-cols-1">
+              <label class="mb-2.5 block text-xs text-muted">Minimum score<input id="discovery-min" class="mt-1.5 w-full rounded-lg border border-line bg-bg px-2.5 py-[9px] text-sm text-ink outline-none focus:border-accent focus:ring-[3px] focus:ring-accent-ring" type="number" min="0" max="100" step="5" /></label>
+              <label class="mb-2.5 block text-xs text-muted">Posted within<select id="discovery-days" class="select mt-1.5 w-full">
+                <option value="1">24 hours</option><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="">Any time</option>
+              </select></label>
+              <label class="mb-2.5 block text-xs text-muted">Where<select id="discovery-places" class="select mt-1.5 w-full">
+                <option value="any">Anywhere in the US</option><option value="remote-or-local">US remote, or in my state</option><option value="remote">US remote only</option>
+              </select></label>
+            </div>
+            <label class="discovery-check flex items-center gap-2 text-[13px] text-ink"><input id="discovery-unverified" type="checkbox" /> Include postings not yet verified</label>
+            <p class="muted small mt-3">US jobs only. Saved for this profile; tailoring a resume never changes it.</p>
+            <button id="discovery-save-search" class="btn btn-primary" type="button">Save and search</button>
+            <p id="discovery-search-status" class="muted small mt-3" role="status" aria-live="polite"></p>
+          </section>
+        </div>
+        <section class="extension-panel discovery-results min-w-0 rounded-card border border-line bg-elev p-6" aria-labelledby="discovery-results-heading">
+          <header class="discovery-results-header flex flex-wrap items-center gap-3">
+            <h3 id="discovery-results-heading" class="mr-auto text-[1.17em] font-bold">Matches <span id="discovery-count" class="muted text-sm"></span></h3>
+            <label class="field-label" for="discovery-target">Send to</label>
+            <select id="discovery-target" class="select"><option value="">Link an extension first</option></select>
+          </header>
+          <p id="discovery-funnel" class="muted small mt-3"></p>
+          <p id="discovery-send-status" class="muted small mt-3" role="status" aria-live="polite"></p>
+          <ol id="discovery-list" class="discovery-list mt-3 list-none p-0"></ol>
+          <p id="discovery-empty" class="muted mb-[18px] text-sm"></p>
+        </section>
+      </section>
+
       <!-- TEMPLATE PICKER VIEW -->
       <section id="picker-view" class="view">
-        <header class="picker-header">
+        <header class="mb-5 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 id="picker-profile-name">Profile</h2>
-            <p class="muted small">Pick a layout, then continue to the editor.</p>
+            <h2 id="picker-profile-name" class="m-0 mb-1 text-[22px] font-bold leading-snug">Profile</h2>
+            <p class="muted small mt-3">Pick a layout, then continue to the editor.</p>
           </div>
-          <div class="picker-actions">
+          <div class="flex items-center gap-2.5">
             <button id="picker-back-btn" class="btn btn-ghost" type="button">
               ← Profiles
             </button>
@@ -88,32 +158,32 @@
             </button>
           </div>
         </header>
-        <div id="template-grid" class="template-grid" aria-label="Resume templates"></div>
+        <div id="template-grid" class="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4" aria-label="Resume templates"></div>
       </section>
 
       <!-- WORKSPACE VIEW -->
       <section id="workspace-view" class="view">
         <div id="manual-workspace">
-        <header class="workspace-header">
-          <div class="workspace-profile">
-            <div id="ws-avatar" class="avatar avatar-sm">?</div>
-            <div class="workspace-profile-text">
-              <div class="ws-name-row">
-                <h2 id="ws-name">Profile</h2>
-                <span id="ws-template" class="ws-chip">
-                  <span class="ws-chip-prefix">Template</span>
+        <header class="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex min-w-0 items-center gap-3.5">
+            <div id="ws-avatar" class="avatar cursor-pointer rounded-[14px] text-[22px] transition-[transform,box-shadow] duration-150 hover:scale-105 hover:shadow-[0_0_0_2px_var(--accent)] focus-visible:shadow-[0_0_0_2px_var(--accent)] focus-visible:outline-none">?</div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <h2 id="ws-name" class="m-0 max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap text-lg font-semibold leading-snug">Profile</h2>
+                <span id="ws-template" class="inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-line bg-hover py-[3px] pl-2 pr-2.5 text-xs leading-[1.3] text-ink">
+                  <span class="text-[10px] font-semibold uppercase tracking-[0.6px] text-muted">Template</span>
                   <span id="ws-template-label">Modern</span>
                 </span>
-                <span id="ws-company" class="ws-chip hidden">
-                  <span class="ws-chip-prefix">Target</span>
-                  <span id="ws-company-label"></span>
+                <span id="ws-company" class="hidden inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-line bg-hover py-[3px] pl-2 pr-2.5 text-xs leading-[1.3] text-ink">
+                  <span class="text-[10px] font-semibold uppercase tracking-[0.6px] text-muted">Target</span>
+                  <span id="ws-company-label" class="max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap"></span>
                 </span>
               </div>
-              <p id="ws-meta" class="muted small"></p>
+              <p id="ws-meta" class="muted small mt-1"></p>
             </div>
           </div>
 
-          <div class="workspace-controls">
+          <div class="flex flex-wrap items-center gap-2.5">
             <button id="change-template-btn" class="btn btn-ghost" type="button">
               Change template
             </button>
@@ -129,17 +199,17 @@
           </div>
         </header>
 
-        <div id="customize-section" class="customize-section">
+        <div id="customize-section" class="group/cust mb-3">
           <button
             id="customize-toggle"
-            class="customize-toggle"
+            class="mb-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs font-semibold uppercase tracking-[0.6px] text-muted transition-colors duration-150 hover:bg-elev hover:text-ink focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--accent-ring)] focus-visible:outline-none"
             type="button"
             aria-expanded="true"
             aria-controls="customize-bar"
             title="Show / hide customization controls"
           >
             <svg
-              class="customize-toggle-chevron"
+              class="transition-transform duration-150 group-[.is-collapsed]/cust:-rotate-90"
               viewBox="0 0 24 24"
               width="16"
               height="16"
@@ -151,7 +221,7 @@
           </button>
           <div
             id="customize-bar"
-            class="customize-bar"
+            class="flex max-h-[168px] flex-wrap items-center gap-x-3.5 gap-y-2.5 overflow-y-auto rounded-card border border-line bg-elev px-3.5 py-2.5 group-[.is-collapsed]/cust:hidden"
             role="toolbar"
             aria-label="Resume customization"
           >
@@ -159,26 +229,27 @@
           </div>
         </div>
 
-        <div class="workspace-body">
-          <div class="preview-pane">
-            <div class="preview-toolbar">
+        <div class="grid h-[calc(100vh-280px)] min-h-[480px] grid-cols-[minmax(280px,1.15fr)_minmax(260px,1fr)] gap-4">
+          <div class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-panel border border-line bg-elev">
+            <div class="flex shrink-0 items-center justify-between border-b border-line bg-elev2 px-3.5 py-2.5">
               <span class="field-label">Preview</span>
             </div>
-            <div class="preview-frame-wrap">
+            <div class="preview-frame-wrap group/frame relative min-h-0 flex-auto overflow-hidden bg-[#f5f6f8] [[data-theme=light]_&]:bg-[#e9ecf2]">
               <iframe
                 id="preview-frame"
+                class="block h-full w-full border-none bg-white"
                 title="Resume preview"
               ></iframe>
-              <div id="preview-spinner" class="preview-spinner" aria-hidden="true"></div>
-              <p id="preview-error" class="preview-error hidden"></p>
+              <div id="preview-spinner" class="pointer-events-none absolute right-3 top-3 h-[18px] w-[18px] animate-[spin_0.8s_linear_infinite] rounded-full border-2 border-black/15 border-t-accent opacity-0 transition-opacity duration-150 group-[.is-busy]/frame:opacity-100" aria-hidden="true"></div>
+              <p id="preview-error" class="hidden pointer-events-none absolute inset-x-3 bottom-3 m-0 rounded-lg border border-danger-line bg-danger-bg px-3 py-2.5 text-xs text-danger-hover"></p>
             </div>
           </div>
 
-          <div class="right-stack">
-            <div class="editor-pane" data-pane="prompt">
-              <div class="editor-toolbar">
+          <div class="right-stack grid min-h-0 min-w-0 grid-rows-[minmax(120px,1fr)_minmax(120px,1fr)_minmax(140px,1.2fr)] gap-3.5">
+            <div class="editor-pane group/pane flex min-h-0 min-w-0 flex-col overflow-hidden rounded-panel border border-line bg-elev [&.is-collapsed]:h-auto [&.is-collapsed]:flex-none [&.is-collapsed>*:not(.editor-toolbar)]:!hidden" data-pane="prompt">
+              <div class="editor-toolbar flex shrink-0 items-center justify-between border-b border-line bg-elev2 px-3.5 py-2.5">
                 <span class="field-label">Prompt</span>
-                <div class="editor-toolbar-right">
+                <div class="inline-flex items-center gap-2.5">
                   <span id="prompt-status" class="muted small"></span>
                   <button
                     id="generate-prompt-btn"
@@ -199,13 +270,13 @@
                   </button>
                   <button
                     type="button"
-                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    class="btn btn-ghost btn-icon-sm shrink-0"
                     data-pane-toggle="prompt"
                     title="Hide prompt"
                     aria-label="Hide prompt"
                     aria-expanded="true"
                   >
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <svg class="block transition-transform duration-[180ms] group-[.is-collapsed]/pane:-rotate-90" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                       <path fill="currentColor" d="M7 10l5 5 5-5z" />
                     </svg>
                   </button>
@@ -213,16 +284,16 @@
               </div>
               <textarea
                 id="resume-prompt"
-                class="prose-input"
+                class="min-h-0 w-full flex-auto resize-none border-none bg-transparent p-3.5 font-sans text-[13.5px] leading-normal text-ink outline-none placeholder:text-muted placeholder:opacity-[0.85]"
                 placeholder="Paste a prompt here. It is plain text — useful for generating the resume JSON with an LLM. It is auto-saved per profile."
                 spellcheck="true"
               ></textarea>
             </div>
 
-            <div class="editor-pane" data-pane="jd">
-              <div class="editor-toolbar">
+            <div class="editor-pane group/pane flex min-h-0 min-w-0 flex-col overflow-hidden rounded-panel border border-line bg-elev [&.is-collapsed]:h-auto [&.is-collapsed]:flex-none [&.is-collapsed>*:not(.editor-toolbar)]:!hidden" data-pane="jd">
+              <div class="editor-toolbar flex shrink-0 items-center justify-between border-b border-line bg-elev2 px-3.5 py-2.5">
                 <span class="field-label">Job description</span>
-                <div class="editor-toolbar-right">
+                <div class="inline-flex items-center gap-2.5">
                   <span id="jd-status" class="muted small"></span>
                   <button
                     id="paste-jd-btn"
@@ -235,13 +306,13 @@
                   </button>
                   <button
                     type="button"
-                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    class="btn btn-ghost btn-icon-sm shrink-0"
                     data-pane-toggle="jd"
                     title="Hide job description"
                     aria-label="Hide job description"
                     aria-expanded="true"
                   >
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <svg class="block transition-transform duration-[180ms] group-[.is-collapsed]/pane:-rotate-90" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                       <path fill="currentColor" d="M7 10l5 5 5-5z" />
                     </svg>
                   </button>
@@ -249,16 +320,16 @@
               </div>
               <textarea
                 id="resume-jd"
-                class="prose-input"
+                class="min-h-0 w-full flex-auto resize-none border-none bg-transparent p-3.5 font-sans text-[13.5px] leading-normal text-ink outline-none placeholder:text-muted placeholder:opacity-[0.85]"
                 placeholder="Paste the job description here. Saved per profile and exported as JD.txt next to the PDF."
                 spellcheck="true"
               ></textarea>
             </div>
 
-            <div class="editor-pane" data-pane="json">
-              <div class="editor-toolbar">
+            <div class="editor-pane group/pane flex min-h-0 min-w-0 flex-col overflow-hidden rounded-panel border border-line bg-elev [&.is-collapsed]:h-auto [&.is-collapsed]:flex-none [&.is-collapsed>*:not(.editor-toolbar)]:!hidden" data-pane="json">
+              <div class="editor-toolbar flex shrink-0 items-center justify-between border-b border-line bg-elev2 px-3.5 py-2.5">
                 <span class="field-label">Resume data (JSON)</span>
-                <div class="editor-toolbar-right">
+                <div class="inline-flex items-center gap-2.5">
                   <span id="json-status" class="muted small"></span>
                   <button
                     id="paste-json-btn"
@@ -271,13 +342,13 @@
                   </button>
                   <button
                     type="button"
-                    class="btn btn-ghost btn-icon-sm pane-toggle"
+                    class="btn btn-ghost btn-icon-sm shrink-0"
                     data-pane-toggle="json"
                     title="Hide resume JSON"
                     aria-label="Hide resume JSON"
                     aria-expanded="true"
                   >
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <svg class="block transition-transform duration-[180ms] group-[.is-collapsed]/pane:-rotate-90" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                       <path fill="currentColor" d="M7 10l5 5 5-5z" />
                     </svg>
                   </button>
@@ -285,52 +356,80 @@
               </div>
               <textarea
                 id="resume-json"
+                class="min-h-0 w-full flex-auto resize-none whitespace-pre border-none bg-transparent p-3.5 font-mono text-[12.5px] leading-[1.55] text-ink outline-none [tab-size:2]"
                 spellcheck="false"
                 autocomplete="off"
                 autocapitalize="off"
                 autocorrect="off"
               ></textarea>
-              <p id="json-error" class="json-error hidden"></p>
+              <p id="json-error" class="hidden m-0 shrink-0 whitespace-pre-wrap border-t border-danger-line bg-danger-bg px-3.5 py-2.5 font-mono text-[12.5px] text-danger-hover"></p>
             </div>
           </div>
         </div>
         </div>
         <section id="extension-workspace" hidden aria-label="Chrome extension workspace">
-          <header class="workspace-header">
+          <header class="workspace-header ext-header mb-3 flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 id="extension-profile-name">Profile</h2>
-              <p class="muted small">Chrome extension mode &middot; Review answers before filling. Submit applications yourself.</p>
+              <h2 id="extension-profile-name" class="my-5 text-2xl font-bold">Profile</h2>
+              <p class="muted small my-3">Chrome extension mode &middot; Review answers before filling. Submit applications yourself.</p>
             </div>
             <button id="extension-edit-profile" class="btn btn-ghost" type="button">Edit profile</button>
           </header>
-          <div class="extension-layout">
-            <section class="extension-panel extension-links-panel" aria-labelledby="extension-links-heading">
-              <h3 id="extension-links-heading">Job links</h3>
-              <label for="extension-job-links" class="field-label">One job link per line</label>
-              <textarea id="extension-job-links" rows="12" spellcheck="false" placeholder="https://jobs.example.com/role" aria-describedby="extension-links-help"></textarea>
-              <p id="extension-links-help" class="muted small">Save links for this profile. Duplicate links are combined.</p>
-              <button id="extension-save-links" class="btn btn-primary" type="button">Save job links</button>
-              <p id="extension-links-status" class="muted small" role="status" aria-live="polite"></p>
-            </section>
-            <section class="extension-panel" aria-labelledby="extension-dashboard-heading">
-              <h3 id="extension-dashboard-heading">Chrome extension dashboard</h3>
-              <div class="extension-metrics">
-                <div><strong id="extension-connected-count">0 / 8</strong><span>Extensions connected to this app</span></div>
-                <div><strong id="extension-job-count">0</strong><span>Saved job links for this profile</span></div>
+
+          <!-- Connection: the linked browser on one line, pairing beside it (open until a browser is linked). -->
+          <section class="ext-connection mb-3.5 rounded-card border border-line bg-elev px-3.5 py-2.5" aria-label="Browser connection">
+            <div class="ext-connection-row flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div id="extension-slots" class="extension-cards m-0 flex flex-row flex-wrap gap-2 empty:hidden" aria-label="Linked Chrome extensions"></div>
+              <p id="extension-slots-empty" class="ext-browser-empty m-0 text-[13px] text-muted">No browser linked yet. Pair one with the code below.</p>
+              <span id="extension-browser-counts" class="ext-browser-counts muted small"><strong id="extension-connected-count">0</strong> <span id="extension-connected-label">Browsers online</span> &middot; <strong id="extension-open-count">0</strong> open in Chrome</span>
+              <label id="extension-target-field" class="ext-target flex items-center gap-1.5 text-[13px]" hidden>Send jobs to <select id="extension-target" class="select w-auto px-2 py-1"><option value="">Link an extension first</option></select></label>
+            </div>
+            <details id="extension-pairing" class="extension-pairing ext-pairing-bar mt-2 border-t border-line pt-2" open>
+              <summary class="cursor-pointer text-[13px] font-semibold [[open]>&]:mb-2">Pair a browser</summary>
+              <div class="ext-pairing-row flex flex-wrap items-center gap-2">
+                <label class="ext-pairing-label text-[13px] text-muted" for="extension-pairing-code">Pairing code for this profile</label>
+                <input id="extension-pairing-code" class="min-w-0 max-w-[420px] flex-[1_1_260px] rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-[13px] leading-[1.4] text-ink outline-none" type="text" readonly />
+                <button id="extension-copy-code" class="btn btn-primary btn-sm" type="button">Copy code</button>
+                <button id="extension-rotate-code" class="btn btn-ghost btn-sm" type="button">New code</button>
               </div>
-              <p id="extension-bridge-notice" class="extension-connection-notice">Checking local connection service...</p>
-              <label class="field">Pairing code (enter in the extension)<input id="extension-pairing-code" type="text" readonly /></label>
-              <button id="extension-copy-code" class="btn btn-ghost btn-sm" type="button">Copy pairing code</button>
-              <button id="extension-rotate-code" class="btn btn-ghost btn-sm" type="button">New pairing code</button>
-              <label class="field">Send jobs to<select id="extension-target" class="select"><option value="">Link an extension first</option></select></label>
-              <p id="extension-dispatch-status" class="muted small" role="status"></p>
-              <p class="muted small">Up to 8 linked extensions across the app. Send a saved job below, then open it from the extension. Review answers before filling; submit yourself.</p>
-              <div id="extension-slots" class="extension-slots" aria-label="Extension connection slots"></div>
-              <h4>Saved jobs</h4>
-              <ul id="extension-job-list" class="extension-job-list"></ul>
-              <p id="extension-jobs-empty" class="muted small">Add job links on the left to get started.</p>
-            </section>
+              <p class="muted small mb-0 mt-2">Enter it in the extension's side panel. A browser paired with this code runs only this profile's jobs; use a separate Chrome profile for each person.</p>
+            </details>
+            <p id="extension-bridge-notice" class="ext-notice mb-0 mt-2 rounded-[10px] bg-accent-ring px-3 py-2 text-[13px] leading-normal" role="status">Checking local connection service...</p>
+          </section>
+
+          <!-- Toolbar: filter by state (with counts), and add or clear links. -->
+          <div class="ext-toolbar mb-3 flex flex-wrap items-center justify-between gap-2.5">
+            <div class="ext-tabs flex flex-wrap gap-1.5" role="tablist" aria-label="Show jobs">
+              <button class="ext-tab is-active inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="all">All <span id="ext-count-all" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
+              <button class="ext-tab is-attention inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="attention">Needs you <span id="ext-count-attention" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-attention-ink">0</span></button>
+              <button class="ext-tab is-busy inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="busy">Working <span id="ext-count-busy" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-busy">0</span></button>
+              <button class="ext-tab is-idle inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="idle">Ready <span id="ext-count-idle" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-ready-ink">0</span></button>
+              <button class="ext-tab inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="unsent">Not sent <span id="ext-count-unsent" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
+              <button class="ext-tab inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="done">Ended <span id="ext-count-done" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
+            </div>
+            <div class="ext-toolbar-actions flex items-center gap-2">
+              <span class="muted small"><span id="extension-job-count">0</span> links</span>
+              <button id="extension-links-edit" class="btn btn-primary btn-sm" type="button">+ Add links</button>
+              <button id="extension-links-clear" class="btn btn-ghost btn-sm" type="button" title="Remove links that are not open in Chrome">Clear not sent</button>
+            </div>
           </div>
+
+          <!-- Adding or editing links: opens on request. -->
+          <section id="extension-links-editor" class="ext-editor mb-3 rounded-card border border-line bg-elev p-3.5" hidden aria-labelledby="extension-links-heading">
+            <h3 id="extension-links-heading" class="mb-1.5 mt-0 text-sm font-bold">Job links</h3>
+            <label for="extension-job-links" class="field-label">One job link per line. Duplicate links are combined.</label>
+            <textarea id="extension-job-links" class="mb-2 mt-1.5 block min-h-[130px] w-full resize-y rounded-lg border border-line bg-bg p-2.5 text-[13px] leading-relaxed text-ink outline-none focus:border-accent focus:shadow-[inset_0_0_0_1px_var(--accent)]" rows="6" spellcheck="false" placeholder="https://jobs.example.com/role"></textarea>
+            <div class="ext-editor-actions flex gap-1.5">
+              <button id="extension-save-links" class="btn btn-primary btn-sm" type="button">Save</button>
+              <button id="extension-links-cancel" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+            </div>
+          </section>
+          <p id="extension-links-status" class="ext-status muted small mb-2 mt-0 empty:hidden" role="status" aria-live="polite"></p>
+          <p id="extension-dispatch-status" class="ext-status muted small mb-2 mt-0 empty:hidden [&:not(:empty)]:fixed [&:not(:empty)]:bottom-6 [&:not(:empty)]:right-6 [&:not(:empty)]:z-40 [&:not(:empty)]:m-0 [&:not(:empty)]:max-w-[min(440px,80vw)] [&:not(:empty)]:rounded-[10px] [&:not(:empty)]:border [&:not(:empty)]:border-l-4 [&:not(:empty)]:border-line [&:not(:empty)]:border-l-accent [&:not(:empty)]:bg-elev [&:not(:empty)]:px-3.5 [&:not(:empty)]:py-2.5 [&:not(:empty)]:text-[13px] [&:not(:empty)]:text-ink [&:not(:empty)]:shadow-soft" role="status"></p>
+
+          <!-- The jobs, one row each, grouped by state. -->
+          <div id="extension-job-list" class="ext-groups flex flex-col gap-4" aria-label="Jobs"></div>
+          <p id="extension-jobs-empty" class="ext-empty my-2 rounded-card border border-dashed border-line-strong p-[18px] text-center text-muted" hidden>No job links yet. Click + Add links to start.</p>
         </section>
       </section>
     </main>
@@ -339,32 +438,34 @@
     <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-backdrop" data-close></div>
       <div class="modal-card">
-        <h2 id="modal-title">New profile</h2>
+        <h2 id="modal-title" class="mb-3.5 shrink-0 text-lg font-bold">New profile</h2>
 
         <div class="modal-body">
-          <fieldset class="profile-mode-field">
-            <legend class="field-label">Application mode</legend>
-            <div class="profile-mode-options">
-              <label><input type="radio" name="profile-application-mode" id="profile-manual-mode" value="manual" checked /> Manual</label>
-              <label><input type="radio" name="profile-application-mode" id="profile-extension-mode" value="extension" /> Chrome extension (Auto)</label>
+          <fieldset class="profile-mode-field mb-[22px] rounded-card border border-line p-3.5">
+            <legend class="field-label mb-1.5 block px-0.5">Application mode</legend>
+            <div class="profile-mode-options flex flex-wrap gap-3">
+              <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2.5 has-[:checked]:border-accent has-[:checked]:bg-accent-ring"><input class="accent-accent" type="radio" name="profile-application-mode" id="profile-manual-mode" value="manual" checked /> Manual</label>
+              <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2.5 has-[:checked]:border-accent has-[:checked]:bg-accent-ring"><input class="accent-accent" type="radio" name="profile-application-mode" id="profile-extension-mode" value="extension" /> Chrome extension (Auto)</label>
             </div>
-            <p class="muted small">Manual opens the resume editor. Chrome extension opens job links and the connection dashboard.</p>
+            <p class="muted small mb-0 mt-3">Manual opens the resume editor. Chrome extension opens job links and the connection dashboard.</p>
           </fieldset>
-          <div class="form-grid">
-            <label class="field">
-              <span class="field-label">First name</span>
+          <div class="form-grid mb-[18px] grid grid-cols-2 gap-x-3.5 gap-y-3">
+            <label class="field block">
+              <span class="field-label mb-1.5 block">First name</span>
               <input
                 id="first-name"
+                class="field-input"
                 type="text"
                 maxlength="40"
                 placeholder="Alice"
                 autocomplete="off"
               />
             </label>
-            <label class="field">
-              <span class="field-label">Last name</span>
+            <label class="field block">
+              <span class="field-label mb-1.5 block">Last name</span>
               <input
                 id="last-name"
+                class="field-input"
                 type="text"
                 maxlength="40"
                 placeholder="Doe"
@@ -372,14 +473,15 @@
               />
             </label>
 
-            <label class="field">
-              <span class="field-label">Date of birth</span>
-              <input id="dob" type="date" />
+            <label class="field block">
+              <span class="field-label mb-1.5 block">Date of birth</span>
+              <input id="dob" class="field-input" type="date" />
             </label>
-            <label class="field">
-              <span class="field-label">Location</span>
+            <label class="field block">
+              <span class="field-label mb-1.5 block">Location</span>
               <input
                 id="location"
+                class="field-input"
                 type="text"
                 maxlength="120"
                 placeholder="City, State"
@@ -387,20 +489,22 @@
               />
             </label>
 
-            <label class="field">
-              <span class="field-label">Phone</span>
+            <label class="field block">
+              <span class="field-label mb-1.5 block">Phone</span>
               <input
                 id="phone"
+                class="field-input"
                 type="tel"
                 maxlength="32"
                 placeholder="+1 (555) 123-4567"
                 autocomplete="off"
               />
             </label>
-            <label class="field">
-              <span class="field-label">Email</span>
+            <label class="field block">
+              <span class="field-label mb-1.5 block">Email</span>
               <input
                 id="email"
+                class="field-input"
                 type="email"
                 maxlength="120"
                 placeholder="you@gmail.com"
@@ -408,10 +512,11 @@
               />
             </label>
 
-            <label class="field full">
-              <span class="field-label">SSN</span>
+            <label class="field full col-span-full block">
+              <span class="field-label mb-1.5 block">SSN</span>
               <input
                 id="ssn"
+                class="field-input"
                 type="text"
                 maxlength="11"
                 placeholder="XXX-XX-XXXX"
@@ -420,27 +525,28 @@
               />
             </label>
 
-            <label class="field full">
-              <span class="field-label">Driver's license #</span>
+            <label class="field full col-span-full block">
+              <span class="field-label mb-1.5 block">Driver's license #</span>
               <input
                 id="dl"
+                class="field-input"
                 type="text"
                 maxlength="40"
                 autocomplete="off"
               />
             </label>
 
-            <label class="field">
-              <span class="field-label">DL issued date</span>
-              <input id="dl-issued" type="date" />
+            <label class="field block">
+              <span class="field-label mb-1.5 block">DL issued date</span>
+              <input id="dl-issued" class="field-input" type="date" />
             </label>
-            <label class="field">
-              <span class="field-label">DL expire date</span>
-              <input id="dl-expire" type="date" />
+            <label class="field block">
+              <span class="field-label mb-1.5 block">DL expire date</span>
+              <input id="dl-expire" class="field-input" type="date" />
             </label>
 
-            <div class="field full field-with-switch">
-              <div class="field-row">
+            <div class="field full field-with-switch col-span-full block">
+              <div class="field-row mb-1.5 flex items-center justify-between gap-2.5">
                 <label for="linkedin" class="field-label">LinkedIn</label>
                 <label class="toggle-switch">
                   <input type="checkbox" id="linkedin-visible" />
@@ -450,14 +556,15 @@
               </div>
               <input
                 id="linkedin"
+                class="field-input"
                 type="url"
                 placeholder="https://linkedin.com/in/..."
                 autocomplete="off"
               />
             </div>
 
-            <div class="field full field-with-switch">
-              <div class="field-row">
+            <div class="field full field-with-switch col-span-full block">
+              <div class="field-row mb-1.5 flex items-center justify-between gap-2.5">
                 <label for="github" class="field-label">GitHub</label>
                 <label class="toggle-switch">
                   <input type="checkbox" id="github-visible" />
@@ -467,17 +574,19 @@
               </div>
               <input
                 id="github"
+                class="field-input"
                 type="url"
                 placeholder="https://github.com/..."
                 autocomplete="off"
               />
             </div>
 
-            <label class="field full">
-              <span class="field-label">Save folder for exported PDFs</span>
-              <div class="folder-row">
+            <label class="field full col-span-full block">
+              <span class="field-label mb-1.5 block">Save folder for exported PDFs</span>
+              <div class="folder-row flex items-stretch gap-2">
                 <input
                   id="save-folder"
+                  class="field-input min-w-0 flex-1 cursor-default text-[13px]"
                   type="text"
                   readonly
                   placeholder="Click Browse to choose a folder…"
@@ -486,14 +595,14 @@
                 <button
                   type="button"
                   id="save-folder-pick"
-                  class="btn btn-ghost btn-sm"
+                  class="btn btn-ghost btn-sm shrink-0"
                 >
                   Browse…
                 </button>
                 <button
                   type="button"
                   id="save-folder-clear"
-                  class="btn btn-ghost btn-sm folder-clear"
+                  class="btn btn-ghost btn-sm folder-clear w-9 shrink-0 p-0 text-base leading-none"
                   title="Clear save folder"
                   aria-label="Clear save folder"
                 >
@@ -503,83 +612,90 @@
             </label>
           </div>
 
-          <div class="preview-row">
-            <span class="field-label">Preview</span>
-            <div class="preview">
-              <div id="preview-avatar" class="avatar avatar-lg">A</div>
+          <div class="preview-row mb-1.5">
+            <span class="field-label mb-1.5 block">Preview</span>
+            <div class="preview flex items-center gap-4">
+              <div id="preview-avatar" class="avatar avatar-lg h-[110px] w-[110px] rounded-[26px] text-[50px] tracking-[0.5px] shadow-[0_8px_20px_rgba(0,0,0,0.25)] [text-shadow:0_2px_6px_rgba(0,0,0,0.25)]">A</div>
               <button id="reroll-color" type="button" class="btn btn-ghost">
                 Shuffle color
               </button>
             </div>
           </div>
 
-          <div class="form-section">
-            <div class="form-section-header">
-              <h3>Work History</h3>
+          <div class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
+            <div class="form-section-header mb-2.5 flex items-center justify-between gap-3">
+              <h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Work History</h3>
             </div>
-            <label class="field full">
-              <span class="field-label">Target level / prompt guidance</span>
+            <label class="toggle-switch employer-names-toggle mt-1">
+              <input type="checkbox" id="use-json-employer-names" />
+              <span class="toggle-track"></span>
+              <span class="toggle-label">Use employer names from the resume JSON</span>
+            </label>
+            <p class="muted small mb-4 mt-1.5">Off: the resume shows the company names entered below. On: it shows the names ChatGPT wrote in the resume JSON (dates and locations still come from below).</p>
+            <label class="field full mb-4 block">
+              <span class="field-label mb-1.5 block">Target level / prompt guidance</span>
               <input
                 id="profile-title"
+                class="field-input"
                 type="text"
                 maxlength="120"
                 placeholder="e.g. Senior DevOps Engineer"
                 autocomplete="off"
               />
             </label>
-            <div id="work-history-list" class="entry-list"></div>
+            <div id="work-history-list" class="entry-list mb-2.5 flex flex-col gap-2.5"></div>
             <button
               type="button"
               id="add-work"
-              class="btn btn-ghost btn-sm add-entry-btn"
+              class="btn btn-ghost btn-sm add-entry-btn gap-1"
             >
               + Add work history
             </button>
           </div>
 
-          <div class="form-section">
-            <div class="form-section-header">
-              <h3>Education</h3>
+          <div class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
+            <div class="form-section-header mb-2.5 flex items-center justify-between gap-3">
+              <h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Education</h3>
             </div>
-            <div id="education-list" class="entry-list"></div>
+            <div id="education-list" class="entry-list mb-2.5 flex flex-col gap-2.5"></div>
             <button
               type="button"
               id="add-education"
-              class="btn btn-ghost btn-sm add-entry-btn"
+              class="btn btn-ghost btn-sm add-entry-btn gap-1"
             >
               + Add education
             </button>
           </div>
 
-          <div class="form-section">
-            <div class="form-section-header">
-              <h3>Certifications</h3>
+          <div class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
+            <div class="form-section-header mb-2.5 flex items-center justify-between gap-3">
+              <h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Certifications</h3>
             </div>
-            <div id="certifications-list" class="entry-list"></div>
+            <div id="certifications-list" class="entry-list mb-2.5 flex flex-col gap-2.5"></div>
             <button
               type="button"
               id="add-certification"
-              class="btn btn-ghost btn-sm add-entry-btn"
+              class="btn btn-ghost btn-sm add-entry-btn gap-1"
             >
               + Add certification
             </button>
           </div>
 
-          <div class="form-section">
-            <div class="form-section-header"><h3>Application details</h3></div>
-            <p class="muted small">Saved for application questions. Leave unknown answers unanswered. These fields are separate from your resume.</p>
+          <div class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
+            <div class="form-section-header mb-2.5 flex items-center justify-between gap-3"><h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Application details</h3></div>
+            <p class="muted small mt-3">Saved for application questions. Leave unknown answers unanswered. These fields are separate from your resume.</p>
             <div id="application-details-fields"></div>
-            <label class="field full application-answer-prompt-field">
-              <span class="field-label">Prompt for experience, company interest, and cultural-fit answers</span>
-              <p id="application-answer-prompt-help" class="muted small">Edit how answers to open-ended questions should be written. Factual questions use the application details above.</p>
-              <textarea id="application-answer-prompt" rows="7" aria-describedby="application-answer-prompt-help" spellcheck="true"></textarea>
+            <label class="field full application-answer-prompt-field mb-5 mt-6 flex flex-col gap-3">
+              <span class="field-label m-0 block">Prompt for experience, company interest, and cultural-fit answers</span>
+              <p id="application-answer-prompt-help" class="muted small m-0">Edit how answers to open-ended questions should be written. Factual questions use the application details above.</p>
+              <textarea id="application-answer-prompt" class="field-input min-h-[150px] resize-y rounded-lg bg-elev p-4 leading-normal" rows="7" aria-describedby="application-answer-prompt-help" spellcheck="true"></textarea>
             </label>
 
           </div>
-          <p class="muted small">Stored locally on this device only.</p>
+          <p class="muted small mt-3">Stored locally on this device only.</p>
         </div>
 
-        <div class="modal-actions">
+        <div class="modal-actions mt-4 border-t border-line pt-4">
           <button class="btn btn-ghost" data-close>Cancel</button>
           <button id="save-profile" class="btn btn-primary">Save</button>
         </div>
@@ -590,11 +706,11 @@
     <div id="confirm" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-backdrop" data-confirm-close></div>
       <div class="modal-card">
-        <h2>Delete profile?</h2>
-        <p id="confirm-text" class="muted">
+        <h2 class="mb-3.5 shrink-0 text-lg font-bold">Delete profile?</h2>
+        <p id="confirm-text" class="muted mb-[18px] text-sm">
           This action cannot be undone.
         </p>
-        <div class="modal-actions">
+        <div class="modal-actions mt-4 border-t border-line pt-4">
           <button class="btn btn-ghost" data-confirm-close>Cancel</button>
           <button id="confirm-delete" class="btn btn-danger">Delete</button>
         </div>
@@ -610,15 +726,15 @@
     >
       <div class="modal-backdrop" data-restore-close></div>
       <div class="modal-card">
-        <h2>Restore from backup?</h2>
-        <p id="restore-summary" class="muted small"></p>
-        <p class="muted">
+        <h2 class="mb-3.5 shrink-0 text-lg font-bold">Restore from backup?</h2>
+        <p id="restore-summary" class="muted small mt-3"></p>
+        <p class="muted mb-[18px] text-sm">
           This will <strong>replace</strong> all current profiles, resumes,
           prompts, and style customizations with those from the backup file.
           Exported PDFs in each profile's save folder are not affected; Manage
           reads applications from those folders.
         </p>
-        <div class="modal-actions">
+        <div class="modal-actions mt-4 border-t border-line pt-4">
           <button class="btn btn-ghost" data-restore-close type="button">
             Cancel
           </button>
@@ -632,22 +748,24 @@
     <!-- Manage process modal -->
     <div id="process-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-backdrop" data-process-close></div>
-      <div class="modal-card modal-card-wide">
+      <div class="modal-card modal-card-wide h-[92vh]">
         <div class="modal-header-row">
-          <h2>Application processes</h2>
+          <h2 class="m-0 text-lg font-bold leading-snug">Application processes</h2>
           <button class="btn btn-ghost btn-sm" data-process-close type="button">
             Close
           </button>
         </div>
-        <div class="process-toolbar">
+        <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
           <input
             id="process-search-company"
+            class="field-input w-auto min-w-[160px] flex-[1_1_220px] py-[9px] text-[13px]"
             type="search"
             placeholder="Search company…"
             autocomplete="off"
           />
           <input
             id="process-search-date"
+            class="field-input w-auto min-w-[160px] flex-[1_1_220px] py-[9px] text-[13px]"
             type="search"
             placeholder="Search date (e.g. 06/2026)…"
             autocomplete="off"
@@ -668,7 +786,7 @@
           >
             Import ZIP
           </button>
-          <span class="process-toolbar-spacer"></span>
+          <span class="flex-auto"></span>
           <button
             id="process-refresh"
             type="button"
@@ -678,19 +796,19 @@
             Refresh
           </button>
         </div>
-        <div class="process-table-wrap">
-          <p id="process-empty" class="muted small process-empty"></p>
-          <table class="process-table">
+        <div class="relative min-h-0 flex-auto overflow-auto rounded-[10px] border border-line bg-bg">
+          <p id="process-empty" class="muted small m-3 empty:hidden"></p>
+          <table class="process-table w-full border-collapse text-[13px]">
             <thead>
               <tr>
-                <th class="col-no">No</th>
-                <th class="col-company">Company Name</th>
-                <th class="col-date sortable" data-sort="date">
-                  Date <span class="sort-arrow"></span>
+                <th class="sticky top-0 z-[1] w-12 border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">No</th>
+                <th class="sticky top-0 z-[1] max-w-[280px] border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Company Name</th>
+                <th class="sortable group/sort sticky top-0 z-[1] w-[195px] cursor-pointer select-none whitespace-nowrap border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted hover:bg-hover-strong hover:text-ink [&.active]:text-ink" data-sort="date">
+                  Date <span class="sort-arrow ml-1 inline-block text-[10px] opacity-[0.45] group-[.active]/sort:text-accent group-[.active]/sort:opacity-100"></span>
                 </th>
-                <th class="col-jd">JD</th>
-                <th class="col-resume">Resume</th>
-                <th class="col-actions">Actions</th>
+                <th class="sticky top-0 z-[1] w-20 border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">JD</th>
+                <th class="sticky top-0 z-[1] w-20 border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Resume</th>
+                <th class="sticky top-0 z-[1] w-[90px] whitespace-nowrap border-b border-line bg-elev2 px-3 py-2.5 text-right align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Actions</th>
               </tr>
             </thead>
             <tbody id="process-tbody"></tbody>
@@ -708,16 +826,16 @@
     >
       <div class="modal-backdrop" data-export-close></div>
       <div class="modal-card">
-        <h2>Export applications</h2>
-        <p class="muted small">
+        <h2 class="m-0 mb-3.5 shrink-0 text-lg font-bold leading-snug">Export applications</h2>
+        <p class="muted small mb-4">
           Choose a date to export company folders created on that day.
         </p>
-        <label class="field full">
-          <span class="field-label">Date</span>
-          <input id="process-export-date" type="date" />
+        <label class="mb-4 block">
+          <span class="field-label mb-1.5 block">Date</span>
+          <input id="process-export-date" class="field-input py-[11px]" type="date" />
         </label>
-        <p id="process-export-summary" class="process-export-summary muted small"></p>
-        <ul id="process-export-list" class="process-export-list"></ul>
+        <p id="process-export-summary" class="muted small mb-2 mt-3"></p>
+        <ul id="process-export-list" class="mb-4 max-h-[220px] list-disc overflow-auto rounded-[10px] border border-line bg-bg py-2.5 pl-7 pr-3 text-[13px] leading-normal empty:hidden"></ul>
         <div class="modal-actions">
           <button class="btn btn-ghost" data-export-close type="button">
             Cancel
@@ -738,30 +856,30 @@
     >
       <div class="modal-backdrop" data-import-close></div>
       <div class="modal-card">
-        <h2>Import applications</h2>
+        <h2 class="m-0 mb-3.5 shrink-0 text-lg font-bold leading-snug">Import applications</h2>
         <p class="muted small">
           Choose a ZIP named <code>firstname-lastname-YYYY-MM-DD.zip</code>. Companies
           are compared with your save folder before importing.
         </p>
-        <div class="process-import-pick-row">
+        <div class="my-3 flex flex-wrap items-center gap-3">
           <button id="process-import-pick" class="btn btn-ghost btn-sm" type="button">
             Choose ZIP file
           </button>
-          <span id="process-import-file" class="muted small process-import-file">
+          <span id="process-import-file" class="muted small overflow-hidden text-ellipsis whitespace-nowrap">
             No file selected
           </span>
         </div>
-        <p id="process-import-summary" class="process-import-summary muted small"></p>
-        <div class="process-import-legend hidden" id="process-import-legend">
-          <span class="import-legend-item import-new">New — will import</span>
-          <span class="import-legend-item import-duplicate">Duplicate — will skip</span>
+        <p id="process-import-summary" class="muted small mb-2 tabular-nums"></p>
+        <div class="hidden mb-2 flex gap-3 text-xs" id="process-import-legend">
+          <span class="inline-flex items-center gap-1.5 rounded-full border border-success-line bg-success-bg px-2 py-0.5 font-semibold text-success">New — will import</span>
+          <span class="inline-flex items-center gap-1.5 rounded-full border border-danger-line bg-danger-bg px-2 py-0.5 font-semibold text-danger">Duplicate — will skip</span>
         </div>
-        <div class="process-import-table-wrap hidden" id="process-import-table-wrap">
-          <table class="process-import-table">
+        <div class="hidden mb-4 max-h-[260px] overflow-auto rounded-[10px] border border-line bg-bg" id="process-import-table-wrap">
+          <table class="w-full border-collapse text-[13px]">
             <thead>
               <tr>
-                <th class="col-import-company">Company</th>
-                <th class="col-import-status">Status</th>
+                <th class="sticky top-0 z-[1] border-b border-line bg-elev2 px-3 py-2 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Company</th>
+                <th class="sticky top-0 z-[1] w-[120px] whitespace-nowrap border-b border-line bg-elev2 px-3 py-2 text-right align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Status</th>
               </tr>
             </thead>
             <tbody id="process-import-tbody"></tbody>
@@ -787,14 +905,15 @@
     >
       <div class="modal-backdrop" data-rename-close></div>
       <div class="modal-card">
-        <h2>Edit company name</h2>
-        <p class="muted small">
+        <h2 class="m-0 mb-3.5 shrink-0 text-lg font-bold leading-snug">Edit company name</h2>
+        <p class="muted small mb-4">
           The company folder on disk will be renamed to match.
         </p>
-        <label class="field full">
-          <span class="field-label">Company</span>
+        <label class="mb-4 block">
+          <span class="field-label mb-1.5 block">Company</span>
           <input
             id="process-rename-input"
+            class="field-input py-[11px]"
             type="text"
             maxlength="120"
             autocomplete="off"
@@ -802,7 +921,7 @@
         </label>
         <p
           id="process-rename-error"
-          class="json-error hidden"
+          class="hidden m-0 shrink-0 whitespace-pre-wrap border-t border-danger-line bg-danger-bg px-3.5 py-2.5 font-mono text-[12.5px] text-danger-hover"
           role="alert"
         ></p>
         <div class="modal-actions">
@@ -825,8 +944,8 @@
     >
       <div class="modal-backdrop" data-delete-close></div>
       <div class="modal-card">
-        <h2>Delete this application?</h2>
-        <p id="process-delete-text" class="muted">
+        <h2 class="m-0 mb-3.5 shrink-0 text-lg font-bold leading-snug">Delete this application?</h2>
+        <p id="process-delete-text" class="muted mb-[18px] text-sm">
           The folder and its files will be permanently removed. This action
           cannot be undone.
         </p>
@@ -846,28 +965,49 @@
       <div class="modal-backdrop" data-jd-close></div>
       <div class="modal-card modal-card-wide">
         <div class="modal-header-row">
-          <h2 id="jd-modal-title">Job description</h2>
+          <h2 id="jd-modal-title" class="m-0 text-lg font-bold leading-snug">Job description</h2>
           <button class="btn btn-ghost btn-sm" data-jd-close type="button">
             Close
           </button>
         </div>
-        <pre id="jd-content" class="jd-content"></pre>
+        <pre id="jd-content" class="m-0 max-h-[70vh] min-h-[240px] flex-auto cursor-text select-text overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-line bg-bg p-4 font-mono text-[13px] leading-normal text-ink selection:bg-accent-ring selection:text-ink"></pre>
+      </div>
+    </div>
+
+    <!-- Review the resume ChatGPT wrote for a job, before exporting it -->
+    <div id="resume-review" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resume-review-title">
+      <div class="modal-backdrop" data-review-close></div>
+      <div class="modal-card modal-card-wide resume-review-card h-[90vh] w-[min(860px,96vw)]">
+        <div class="modal-header-row">
+          <div>
+            <h2 id="resume-review-title" class="m-0 text-lg font-bold">Review resume</h2>
+            <p id="resume-review-for" class="muted small mb-0 mt-0.5"></p>
+          </div>
+          <button class="btn btn-ghost btn-sm" data-review-close type="button">Close</button>
+        </div>
+        <div id="resume-review-body" class="modal-body resume-review-body min-h-0 flex-1 py-1 pl-0 pr-2 leading-[1.55]"></div>
+        <div class="resume-review-actions mt-2.5 flex shrink-0 items-center gap-2 border-t border-line pt-3.5">
+          <button id="resume-review-details" class="btn btn-ghost" type="button" title="Open this job's Resume Apply window in Chrome to read or edit it there">Show in Chrome</button>
+          <span class="resume-review-spacer flex-1"></span>
+          <button class="btn btn-ghost" data-review-close type="button">Not now</button>
+          <button id="resume-review-confirm" class="btn btn-primary" type="button">Confirm &amp; export</button>
+        </div>
       </div>
     </div>
 
     <!-- Resume viewer modal -->
     <div id="resume-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-backdrop" data-resume-close></div>
-      <div class="modal-card modal-card-wide">
+      <div class="modal-card modal-card-wide h-[92vh] w-[min(1280px,96vw)]">
         <div class="modal-header-row">
-          <h2 id="resume-modal-title">Resume</h2>
+          <h2 id="resume-modal-title" class="m-0 text-lg font-bold leading-snug">Resume</h2>
           <button class="btn btn-ghost btn-sm" data-resume-close type="button">
             Close
           </button>
         </div>
-        <div class="resume-frame-wrap">
-          <iframe id="resume-frame" class="resume-frame" title="Resume PDF"></iframe>
-          <p id="resume-frame-error" class="preview-error hidden"></p>
+        <div class="relative flex h-full min-h-0 flex-auto overflow-hidden rounded-[10px] border border-line bg-bg">
+          <iframe id="resume-frame" class="block h-full w-full flex-auto border-0 bg-bg" title="Resume PDF"></iframe>
+          <p id="resume-frame-error" class="hidden pointer-events-none absolute inset-x-3 bottom-3 m-0 rounded-lg border border-danger-line bg-danger-bg px-3 py-2.5 text-xs text-danger-hover"></p>
         </div>
       </div>
     </div>
@@ -883,11 +1023,11 @@
       <div class="modal-backdrop" data-detail-close></div>
       <div class="modal-card modal-card-wide profile-detail-card">
         <div class="modal-header-row">
-          <div class="profile-detail-head">
-            <div id="detail-avatar" class="avatar avatar-lg">?</div>
+          <div class="profile-detail-head flex min-w-0 items-center gap-3.5">
+            <div id="detail-avatar" class="avatar avatar-lg h-[110px] w-[110px] rounded-[26px] text-[50px] tracking-[0.5px] shadow-[0_8px_20px_rgba(0,0,0,0.25)] [text-shadow:0_2px_6px_rgba(0,0,0,0.25)]">?</div>
             <div>
-              <h2 id="detail-name">Profile</h2>
-              <p id="detail-subtitle" class="muted small"></p>
+              <h2 id="detail-name" class="m-0 break-words text-[19px] font-bold">Profile</h2>
+              <p id="detail-subtitle" class="muted small mt-0.5"></p>
             </div>
           </div>
           <button
@@ -898,7 +1038,7 @@
             Close
           </button>
         </div>
-        <div id="detail-body" class="profile-detail-body"></div>
+        <div id="detail-body" class="profile-detail-body min-h-0 flex-auto overflow-y-auto pr-1 [&_.detail-section]:mt-[18px] [&_.detail-section:first-child]:mt-1 [&_.detail-section_h3]:mb-2.5 [&_.detail-section_h3]:text-xs [&_.detail-section_h3]:font-bold [&_.detail-section_h3]:uppercase [&_.detail-section_h3]:tracking-[0.6px] [&_.detail-section_h3]:text-muted [&_.detail-grid]:grid [&_.detail-grid]:grid-cols-[160px_1fr] [&_.detail-grid]:items-baseline [&_.detail-grid]:gap-x-3.5 [&_.detail-grid]:gap-y-1.5 max-[600px]:[&_.detail-grid]:grid-cols-1 [&_.detail-key]:text-[13px] [&_.detail-key]:text-muted [&_.detail-val]:select-text [&_.detail-val]:break-words [&_.detail-val]:text-[13.5px] [&_.detail-val]:text-ink [&_.detail-val_a]:text-accent [&_.detail-val_a:hover]:underline [&_.detail-list>li]:border-t [&_.detail-list>li]:border-line [&_.detail-list>li]:py-2.5 [&_.detail-list>li:first-child]:border-t-0 [&_.detail-list>li:first-child]:pt-1 [&_.item-title]:text-[13.5px] [&_.item-title]:font-semibold [&_.item-title]:text-ink [&_.item-meta]:mt-0.5 [&_.item-meta]:text-[12.5px] [&_.item-meta]:text-muted [&_.detail-empty]:italic [&_.detail-empty]:text-muted"></div>
       </div>
     </div>
 
@@ -906,15 +1046,16 @@
     <div id="company-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-backdrop" data-company-close></div>
       <div class="modal-card">
-        <h2>Company name needed</h2>
-        <p class="muted">
+        <h2 class="m-0 mb-3.5 shrink-0 text-lg font-bold leading-snug">Company name needed</h2>
+        <p class="muted mb-[18px] text-sm">
           The resume JSON has no <code>company</code> field. Enter a company
           name — it will be used as the folder name for the exported PDF.
         </p>
-        <label class="field full">
-          <span class="field-label">Company</span>
+        <label class="mb-4 block">
+          <span class="field-label mb-1.5 block">Company</span>
           <input
             id="company-input"
+            class="field-input py-[11px]"
             type="text"
             maxlength="120"
             placeholder="Acme Inc."
@@ -930,7 +1071,7 @@
       </div>
     </div>
 
-    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <div id="toast" class="toast hidden bottom-auto top-6 z-[100] max-w-[80vw] gap-2.5 rounded-[10px] border-success-line bg-success-bg px-3.5 py-2.5 text-[13px] text-success-hover backdrop-blur-[6px] [&.error]:border-danger-line [&.error]:bg-danger-bg [&.error]:text-danger-hover [&_.toast-action]:cursor-pointer [&_.toast-action]:text-[13px] [&_.toast-action]:font-bold [&_.toast-action]:underline [&_.toast-action]:underline-offset-2 [&_.toast-action]:opacity-90 [&_.toast-action:hover]:opacity-100" role="status" aria-live="polite"></div>
 
     <script src="../shared/resume.js"></script>
     <script src="../shared/application-profile.js"></script>
@@ -947,6 +1088,7 @@
     <script src="workspace.js"></script>
     <script src="process.js"></script>
     <script src="extension-workspace.js"></script>
+    <script src="discovery.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

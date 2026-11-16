@@ -488,22 +488,23 @@
         lastGroup = g;
         if (g) {
           const gl = document.createElement('div');
-          gl.className = 'customize-group-label';
+          gl.className = 'mt-0.5 w-full basis-full border-t border-line pb-0.5 pt-1.5 text-[10.5px] font-bold uppercase tracking-[0.8px] text-muted first:mt-0 first:border-t-0 first:pt-0';
           gl.textContent = g;
           bar.appendChild(gl);
         }
       }
 
       const group = document.createElement('div');
-      group.className = 'customize-group';
+      group.className = 'inline-flex items-center gap-2';
       const label = document.createElement('label');
-      label.className = 'field-label inline';
+      label.className = 'field-label whitespace-nowrap';
       label.textContent = c.label;
 
       if (c.type === 'color') {
         label.setAttribute('for', `style-${c.key}`);
         const inp = document.createElement('input');
         inp.type = 'color';
+        inp.className = 'h-[30px] w-[38px] cursor-pointer appearance-none rounded-lg border border-line bg-bg p-0.5 transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--accent-ring)] focus-visible:outline-none [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-md [&::-webkit-color-swatch]:border-none';
         inp.id = `style-${c.key}`;
         inp.dataset.styleKey = c.key;
         inp.value = String(currentStyle[c.key] != null ? currentStyle[c.key] : c.default);
@@ -517,7 +518,7 @@
         label.setAttribute('for', `style-${c.key}`);
         const sel = document.createElement('select');
         sel.id = `style-${c.key}`;
-        sel.className = 'select';
+        sel.className = 'select min-w-[150px] px-2.5 py-[7px] text-[13px]';
         sel.dataset.styleKey = c.key;
         for (const f of window.App.Fonts.list()) {
           const opt = document.createElement('option');
@@ -541,7 +542,7 @@
         const num = document.createElement('input');
         num.type = 'number';
         num.id = `style-${c.key}`;
-        num.className = 'style-range-input';
+        num.className = 'w-[54px] rounded-lg border border-line bg-bg px-1.5 py-1 text-right text-xs tabular-nums text-ink hover:border-line-strong focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--accent-ring)] focus-visible:outline-none';
         num.dataset.styleKey = c.key;
         num.min = String(c.min);
         num.max = String(c.max);
@@ -549,7 +550,7 @@
         num.value = String(initial);
 
         const unitSpan = document.createElement('span');
-        unitSpan.className = 'muted small style-range-unit';
+        unitSpan.className = 'muted small min-w-[14px]';
         unitSpan.textContent = rangeUnitLabel(c.unit);
 
         // Clamp to the control's [min, max] so typed values stay valid.
@@ -573,7 +574,7 @@
         label.setAttribute('for', `style-${c.key}`);
         const sel = document.createElement('select');
         sel.id = `style-${c.key}`;
-        sel.className = 'select select-compact';
+        sel.className = 'select min-w-[92px] px-2.5 py-[7px] text-[13px]';
         sel.dataset.styleKey = c.key;
         for (const o of (c.options || [])) {
           const opt = document.createElement('option');
@@ -595,7 +596,7 @@
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.id = 'style-reset-btn';
-    resetBtn.className = 'btn btn-ghost btn-sm';
+    resetBtn.className = 'btn btn-ghost btn-sm ml-auto';
     resetBtn.textContent = 'Reset style';
     resetBtn.addEventListener('click', () => {
       currentStyle = window.App.Templates.defaultStyleFor(currentTemplateId());

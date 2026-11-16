@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
       const url = new URL(request.url);
       if(url.hostname==='extension.fixture') {
         const file = url.pathname.slice(1) || 'panel.html';
-        if(!['panel.html','panel.js','panel.css'].includes(file))return new Response('',{status:404});
+        if(!['panel.html','panel.js','panel.css','tailwind.css'].includes(file))return new Response('',{status:404});
         let content = fs.readFileSync(path.join(root,'chrome-extension',file),'utf8');
         if(file==='panel.html')content=content.replace('<head>','<head>'+panelStub);
         return new Response(content,{headers:{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html'}});
@@ -171,7 +171,7 @@ app.whenReady().then(async () => {
     }
     console.log('PASS: plain JSON without author roles is read from normal DOM, shadow roots, and frames; prompt examples, drafts, and stale replies are excluded.');
 
-    const panel = await windowFor();await panel.loadURL('https://extension.fixture/panel.html');
+    const panel = await windowFor();await panel.loadURL('https://extension.fixture/panel.html?job=fixture');
     await wait(panel,'document.querySelectorAll(".question").length===1');
     await wait(panel,'!document.querySelector("#workflow-step").disabled');
     assert.equal(await panel.webContents.executeJavaScript('document.querySelectorAll("[data-workflow-section]:not([hidden])").length'),1);
@@ -227,7 +227,9 @@ app.whenReady().then(async () => {
     ipcMain.handle('profiles:list',()=>data);ipcMain.handle('profiles:save',(_e,items)=>{data.splice(0,data.length,...items);return true;});
     for (const name of ['resume:get','prompt:get','jd:get']) ipcMain.handle(name,()=>null);
     ipcMain.handle('pdf:render',()=>({error:'Preview omitted in fixture'}));
-    ipcMain.handle('extension:state',()=>({running:true,connections:[],jobs:[],maxConnections:8,pairingCode:'fixture-code',error:''}));
+    const bridgeState={running:true,connections:[],jobs:[],maxConnections:8,pairingCode:'fixture-code',error:''};
+    ipcMain.handle('extension:state',()=>bridgeState);
+    const commands=[];ipcMain.handle('extension:command',(_e,args)=>{commands.push(args);return {ok:true};});
     const manager = await windowFor({preload:path.join(root,'src/main/preload.js')});
     const errors=[];manager.webContents.on('console-message',event=>{if((event.level==='error'||event.level===3) && !event.message.includes('Preview omitted in fixture'))errors.push(event.message);});
     await manager.loadFile(path.join(root,'src/renderer/index.html'));
@@ -235,16 +237,130 @@ app.whenReady().then(async () => {
     await manager.webContents.executeJavaScript('location.hash="#/profile/extension"');
     await wait(manager,'document.querySelector("#extension-pairing-code").value==="fixture-code"');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#manual-workspace").hidden'),true);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".extension-slot").length'),8);
+    // No placeholder slots: the empty note and open pairing section show until a browser links.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".extension-card").length'),0);
+    assert.equal(await manager.webContents.executeJavaScript('!document.querySelector("#extension-slots-empty").hidden && document.querySelector("#extension-pairing").open'),true);
+    // No browser yet: one short line, no empty counts.
+    assert.equal(await manager.webContents.executeJavaScript('getComputedStyle(document.querySelector("#extension-browser-counts")).display'),'none');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-slots-empty").textContent'),'No browser linked yet. Pair one with the code below.');
+    // A linked browser gets its own card with its status and open jobs; pairing folds away.
+    bridgeState.connections=[{id:'c1',name:'Work Chrome',connected:true,lastSeen:Date.now(),pairedAt:Date.now(),profileId:'extension'},{id:'c9',name:'Other Person Chrome',connected:true,lastSeen:Date.now(),pairedAt:Date.now(),profileId:'someone-else'}];
+    bridgeState.jobs=[{id:'j1',profileId:'extension',connectionId:'c1',url:'https://jobs.example.test/job',company:'Acme',title:'Staff Engineer',status:'tabs-opened',progress:{text:'Needs you: solve the CAPTCHA on the job page',level:'attention',key:'waiting-on-page',at:Date.now()},events:[{at:Date.now()-60000,text:'Sent to Work Chrome',level:'info'},{at:Date.now(),text:'Needs you: solve the CAPTCHA on the job page',level:'attention'}]},{id:'j2',profileId:'extension',connectionId:'c1',url:'https://jobs.example.test/old',status:'completed'}];
+    await wait(manager,'document.querySelectorAll(".extension-card.is-online").length===1');
+    // The linked browser is one compact line.
+    const card=await manager.webContents.executeJavaScript('document.querySelector(".extension-card").innerText');
+    for (const text of ['Work Chrome','Online','Active now','1 open','1 ended']) assert.ok(card.includes(text),text);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".extension-card").getBoundingClientRect().height<90'),true);
+    // The board: the summary counts jobs by state, and the job sits in the Needs you lane.
+    // With the browser online, the connection notice stays out of the way.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-bridge-notice").hidden'),true);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-attention").textContent'),'1');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-group.is-attention .job-card .job-card-title").textContent'),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-group.is-attention .ext-group-count").textContent'),'1');
+    // Saved jobs are one table with these columns.
+    assert.deepEqual(await manager.webContents.executeJavaScript('[...document.querySelectorAll("#extension-job-list .ext-table thead th")].map(th=>th.textContent)'),['Job site','Company','Title','Process','Status','Actions','']);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .job-card").tagName'),'TR');
+    // Filter tabs show one group at a time; All brings everything back.
+    await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="unsent"]').click()`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card").length'),0);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .ext-empty").textContent'),'No jobs waiting to be sent.');
+    assert.equal(await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="unsent"]').classList.contains("is-active")`),true);
+    await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="all"]').click()`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card").length'),1);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-slots-empty").hidden && !document.querySelector("#extension-pairing").open && document.querySelector("#extension-target-field").hidden'),true);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-connected-count").textContent'),'1');
+    // With one browser (or none), the Send jobs to picker is not shown at all.
+    assert.equal(await manager.webContents.executeJavaScript('getComputedStyle(document.querySelector("#extension-target-field")).display'),'none');
+    // Another profile's browser is not shown here.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".extension-card").length'),1);
+    assert.equal(await manager.webContents.executeJavaScript('document.body.innerText.includes("Other Person Chrome")'),false);
+    // Each saved job is a card: the site's icon, title and company, what it is doing now.
+    const jobCard='document.querySelector(\'#extension-job-list .job-card[data-url="https://jobs.example.test/job"]\')';
+    await wait(manager,`!!${jobCard} && ${jobCard}.classList.contains("job-attention")`);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-title").textContent`),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-company").textContent`),'Acme');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-state").textContent`),'Needs you: solve the CAPTCHA on the job page · just now');
+    const stepButtons=`[...${jobCard}.querySelectorAll(".job-card-actions button")].map(b=>b.dataset.action).join()`;
+    // Where the job stands, and what happened: a stage bar and its history (newest first),
+    // which stays open across the screen's refresh once opened.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-stage-label").textContent`),'Stage 2 of 6: Job description');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelectorAll(".job-stage.is-done").length`),1);
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-history summary").click()`);
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-history").open`),true);
+    assert.deepEqual(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-history li span")].map(n=>n.textContent)`),['Needs you: solve the CAPTCHA on the job page','Sent to Work Chrome']);
+    // Only the steps that fit where the job is: none while it waits for you on the job page,
+    // with Reopen and End always in the corner.
+    assert.equal(await manager.webContents.executeJavaScript(stepButtons),'');
+    // Reopen, details and end sit in the card's menu, closed until asked for.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
+    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Mark ended');
+    // Clicking elsewhere closes it.
+    await manager.webContents.executeJavaScript('document.querySelector("#extension-job-count").click()');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
+    const tinyPng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    bridgeState.jobs[0]={...bridgeState.jobs[0],page:{title:'Acme - Staff Engineer',icon:tinyPng},progress:{text:'',level:'idle',key:'',at:Date.now()}};
+    await wait(manager,`${stepButtons}==="prepare"`);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-avatar img").src.startsWith("data:image/png")`),true);
+    bridgeState.jobs[0]={...bridgeState.jobs[0],status:'resume-exported'};
+    await wait(manager,`${stepButtons}==="auto,scan"`);
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector('[data-action="auto"]').click()`);
+    await wait(manager,'/Auto-fill sent to/.test(document.querySelector("#extension-dispatch-status").textContent)');
+    assert.deepEqual(commands,[{profileId:'extension',jobId:'j1',action:'auto'}]);
+    // Selecting a row must not change its size.
+    const sizeBefore=await manager.webContents.executeJavaScript(`(()=>{const r=${jobCard}.getBoundingClientRect();return [Math.round(r.top+scrollY),Math.round(r.width),Math.round(r.height)].join()})()`);
+    // Clicking the card itself (not a button) shows that job's window in Chrome.
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-state").click()`);
+    await wait(manager,'/^Showing .* in Chrome\.$/.test(document.querySelector("#extension-dispatch-status").textContent)');
+    assert.deepEqual(commands.map(c=>c.action),['auto','focus']);
+    assert.equal(await manager.webContents.executeJavaScript(`(()=>{const r=${jobCard}.getBoundingClientRect();return [Math.round(r.top+scrollY),Math.round(r.width),Math.round(r.height)].join()})()`),sizeBefore,'the selected row keeps its size');
+    // The clicked card is highlighted, and stays so after the screen refreshes.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-selected") && ${jobCard}.querySelector(".job-card-selected").textContent`),'In front');
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-selected")`),true);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card.is-selected").length'),1);
+    // A waiting resume offers only Confirm resume; the last step's outcome shows on the card.
+    bridgeState.jobs[0]={...bridgeState.jobs[0],progress:{text:"Needs you: confirm the resume in the job's Resume Apply window",level:'attention',key:'confirm-resume',at:Date.now()},lastCommand:{action:'prepare',ok:false,message:'Job description is empty.',at:Date.now()}};
+    // Answers ChatGPT wrote that are not on the form yet offer Fill form.
+    bridgeState.jobs[0]={...bridgeState.jobs[0],status:'questions-scanned',progress:{text:'3 answers ready. Fill the form, or check them first with Show details.',level:'idle',key:'answers-ready',at:Date.now()}};
+    await wait(manager,`${stepButtons}==="fill,ask"`);
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector('[data-action="fill"]').click()`);
+    for(let i=0;i<50 && commands.at(-1).action!=='fill';i++)await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(commands.at(-1).action,'fill');
+    bridgeState.jobs[0]={...bridgeState.jobs[0],progress:{text:"Needs you: review the resume ChatGPT wrote",level:'attention',key:'confirm-resume',at:Date.now()}};
+    await wait(manager,`${stepButtons}==="review"`);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-last-command.is-error").textContent`),'Detect JD & write resume: Job description is empty.');
+    // Review resume shows what ChatGPT wrote in the app; Confirm & export sends the confirm step.
+    bridgeState.jobs[0]={...bridgeState.jobs[0],pendingResume:JSON.stringify({company:'Acme',title:'Staff Platform Engineer',summary:'Built **reliable** systems at scale.',skills:[{Languages:['Go','Python']}],experience:[],education:[]})};
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector('[data-action="review"]').click()`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review").classList.contains("hidden")'),false);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-headline").textContent'),'Staff Platform Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-summary strong").textContent'),'reliable');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-skills dd").textContent'),'Go · Python');
+    await manager.webContents.executeJavaScript('document.querySelector("#resume-review-confirm").click()');
+    await wait(manager,'document.querySelector("#resume-review").classList.contains("hidden")');
+    assert.equal(commands.at(-1).action,'confirmResume');
+    // Show details in Chrome from the card menu.
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector('.job-menu [data-action="details"]').click()`);
+    for(let i=0;i<50 && commands.at(-1).action!=='details';i++)await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(commands.at(-1).action,'details');
+    bridgeState.connections=[];bridgeState.jobs=[];
     await manager.webContents.executeJavaScript('document.querySelector("#extension-edit-profile").click()');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#profile-extension-mode").checked'),true);
+    // The employer-name switch starts off for a profile that never set it, and saves when turned on.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#use-json-employer-names").checked'),false);
+    await manager.webContents.executeJavaScript('document.querySelector("#use-json-employer-names").click()');
     await manager.webContents.executeJavaScript('document.querySelector("#profile-manual-mode").click();document.querySelector("#save-profile").click()');
     await wait(manager,'!document.querySelector("#manual-workspace").hidden && document.querySelector("#extension-workspace").hidden');
     assert.equal(data.find(p=>p.id==='extension').applicationMode,'manual');
+    assert.equal(data.find(p=>p.id==='extension').useJsonEmployerNames,true);
     const promptFocus = await manager.webContents.executeJavaScript('document.querySelector("#application-answer-prompt").focus();getComputedStyle(document.querySelector("#application-answer-prompt")).borderColor');
     assert.ok(promptFocus);
     assert.deepEqual(errors,[]);
-    console.log('PASS: app startup, live dashboard, eight slots, profile mode editing, and manual workspace routing.');
+    console.log('PASS: app startup, live dashboard, a card per linked browser, profile mode editing, and manual workspace routing.');
     const {renderExtensionResume} = require('../src/main/extension-render');
     const {buildDocx} = require('../src/main/docx');
     const Resume = require('../src/shared/resume');

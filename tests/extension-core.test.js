@@ -302,3 +302,91 @@ test('resume response extraction handles UI headers and never accepts question a
   assert.throws(()=>resumeResponse('{"error":"Clearance required"}'),/Clearance required/);
   assert.throws(()=>resumeResponse('{"company":"Incomplete"'),/No complete resume/);
 });
+
+test('an exact option name from GPT counts like its id, so it is not asked again',async()=>{
+  const {decodeReply}=await core;
+  const fields=[{id:'a',label:'Sponsorship?',type:'radio',options:['Yes','No']},{id:'b',label:'Skills',type:'checkbox',options:['Go','Python']}];
+  const reply=decodeReply(JSON.stringify({answers:[{id:'q1',answer:'no'},{id:'q2',answer:['Python','o1']}]}),fields);
+  assert.deepEqual(reply.answers,[{id:'a',answer:'No'},{id:'b',answer:['Python','Go']}]);
+  assert.deepEqual(reply.retry,[]);
+});
+
+test('questions already asked on a page are not asked again after a rescan',async()=>{
+  const {carryPageState,currentAnswers}=await core;
+  const field=(id,label,extra={})=>({id,label,type:'text',options:[],frameId:0,pageUrl:'https://jobs.example/apply#step',...extra});
+  // Repeated labels cannot be remembered by label, so they used to be asked every round.
+  const before={fields:[field('a1','Company'),field('a2','Company'),field('a3','Nickname')],askedIds:['a1','a2','a3'],answers:[{id:'a1',answer:'Acme'},{id:'a2',answer:'Globex'},{id:'a3',answer:null}]};
+  const after=[field('b1','Company',{pageUrl:'https://jobs.example/apply?x=1'}),field('b2','Company'),field('b3','Nickname'),field('b4','Why us?')];
+  const carried=carryPageState(before,after);
+  assert.deepEqual(carried.askedIds,['b1','b2','b3']);
+  const state=currentAnswers({fields:after,answerBook:{},...carried});
+  assert.deepEqual(state.answers.map(item=>item.answer),['Acme','Globex',null,null]);
+  assert.deepEqual(state.unasked,['b4']);
+  // A block added or removed shifts positions: nothing is carried for that label.
+  const grown=[field('c1','Company'),field('c2','Company'),field('c3','Company')];
+  assert.deepEqual(carryPageState(before,grown).askedIds,[]);
+  // Another page is never matched.
+  assert.deepEqual(carryPageState(before,[field('d1','Nickname',{pageUrl:'https://jobs.example/step-2'})]).askedIds,[]);
+});
+
+test('each job summarizes what it is doing now for the app', async () => {
+  const {runProgress} = await core;
+  assert.deepEqual(runProgress({}),{text:'',level:'idle',key:''});
+  assert.deepEqual(runProgress({autopilot:{active:true,waiting:'captcha'}}),{text:'Needs you: solve the CAPTCHA on the job page',level:'attention',key:'waiting-on-page'});
+  assert.equal(runProgress({responseMonitor:{kind:'resume',status:'waiting'}}).level,'busy');
+  assert.equal(runProgress({responseMonitor:{kind:'answers',status:'error',message:'Timed out'}}).text,'Needs you: Timed out');
+  assert.deepEqual(runProgress({autopilot:{active:true,page:2}}),{text:'Auto-filling page 2',level:'busy',key:'auto-filling'});
+  assert.equal(runProgress({pendingResumeResponse:'{}'}).key,'confirm-resume');
+  assert.deepEqual(runProgress({autoSummary:{text:'Form filled. Check it, then submit it yourself.',needsYou:false}}),{text:'Form filled. Check it, then submit it yourself.',level:'idle',key:'auto-finished'});
+  // Waiting on the user outranks everything else.
+  assert.equal(runProgress({autopilot:{active:true,waiting:'login'},responseMonitor:{kind:'answers',status:'waiting'}}).level,'attention');
+});
+
+test('an application-form link points to where the same job description can be read', async () => {
+  const {jdSources} = await core;
+  const kinds = link => jdSources(link).map(source => `${source.kind} ${source.url}`);
+  assert.deepEqual(kinds('https://jobs.lever.co/liatrio/dabbe592-d22e-49ef-91a9-b775a3296fdd/apply?jr_id=6a603494129b652e9cd28103'),[
+    'lever https://api.lever.co/v0/postings/liatrio/dabbe592-d22e-49ef-91a9-b775a3296fdd',
+    'page https://jobs.lever.co/liatrio/dabbe592-d22e-49ef-91a9-b775a3296fdd']);
+  assert.deepEqual(kinds('https://job-boards.greenhouse.io/embed/job_app?for=babelstreet&token=8384370&jr_id=6af7'),['greenhouse https://boards-api.greenhouse.io/v1/boards/babelstreet/jobs/8384370']);
+  assert.deepEqual(kinds('https://jobs.ashbyhq.com/acme/8f2c1a0e-1111-2222-3333-444455556666/application'),[
+    'ashby https://api.ashbyhq.com/posting-api/job-board/acme','page https://jobs.ashbyhq.com/acme/8f2c1a0e-1111-2222-3333-444455556666']);
+  assert.deepEqual(kinds('https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Senior-Engineer_R123/apply/applyManually'),[
+    'workday https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/Remote-USA/Senior-Engineer_R123',
+    'page https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Senior-Engineer_R123']);
+  assert.deepEqual(kinds('https://careers.example.com/jobs/123/apply?src=x'),['page https://careers.example.com/jobs/123']);
+  // Links that already show the posting are left alone.
+  for (const link of ['https://jobs.lever.co/liatrio/dabbe592-d22e-49ef-91a9-b775a3296fdd','https://job-boards.greenhouse.io/babelstreet/jobs/8384370','https://careers.example.com/jobs/123','not a link']) assert.deepEqual(jdSources(link),[],link);
+});
+
+test('each source is read into a title, company and plain-text description', async () => {
+  const {parseJdSource, htmlToText} = await core;
+  const long = 'Build reliable distributed systems for enterprise customers. '.repeat(5);
+  assert.equal(htmlToText('<p>Hello&nbsp;<b>world</b></p><ul><li>One</li><li>Two &amp; three</li></ul><script>x()</script>'),'Hello world\n\n- One\n- Two & three');
+  const lever = parseJdSource({kind:'lever'},JSON.stringify({text:'Senior Forward Deployed Engineer',descriptionPlain:long,lists:[{text:'What You Will Do',content:'<li>Ship AI systems</li><li>Lead clients</li>'}],additionalPlain:'Remote in the US.'}));
+  assert.equal(lever.title,'Senior Forward Deployed Engineer');assert.match(lever.description,/What You Will Do\n- Ship AI systems\n- Lead clients/);assert.match(lever.description,/Remote in the US\.$/);
+  const greenhouse = parseJdSource({kind:'greenhouse'},JSON.stringify({title:'Senior Software Engineer',company_name:'Babel Street',content:'&lt;p&gt;'+long+'&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python&lt;/li&gt;&lt;/ul&gt;'}));
+  assert.deepEqual([greenhouse.title,greenhouse.company],['Senior Software Engineer','Babel Street']);assert.match(greenhouse.description,/\n- Python$/);assert.ok(!greenhouse.description.includes('<'));
+  const ashby = parseJdSource({kind:'ashby',id:'j2'},JSON.stringify({jobs:[{id:'j1',title:'Other',descriptionPlain:long},{id:'j2',title:'Staff Engineer',descriptionPlain:long}]}));
+  assert.equal(ashby.title,'Staff Engineer');
+  assert.equal(parseJdSource({kind:'workday'},JSON.stringify({jobPostingInfo:{title:'Senior Engineer',jobDescription:'<p>'+long+'</p>'}})).title,'Senior Engineer');
+  const page = parseJdSource({kind:'page'},'<html><head><title>x</title><script type="application/ld+json">{"@type":"JobPosting","title":"Data Engineer","hiringOrganization":{"name":"Acme"},"description":"&lt;p&gt;'+long+'&lt;/p&gt;"}</script></head><body>menu</body></html>');
+  assert.deepEqual([page.title,page.company],['Data Engineer','Acme']);
+  assert.match(parseJdSource({kind:'page'},'<html><head><title>Role</title></head><body><nav>x</nav><main><h1>Role</h1><p>'+long+'</p></main></body></html>').description,/^Role\nBuild reliable/);
+  // Too little text, or something that is not the expected data, gives nothing.
+  assert.equal(parseJdSource({kind:'lever'},JSON.stringify({text:'T',descriptionPlain:'Short.'})),null);
+  assert.equal(parseJdSource({kind:'greenhouse'},'<html>Not found</html>'),null);
+});
+
+test('answers that are ready but not yet on the form offer Fill form in the app', async () => {
+  const {runProgress} = await core;
+  const run = {answers:[{id:'a',answer:'Yes'},{id:'b',answer:null},{id:'c',answer:['Go']},{id:'d',answer:[]}],answersAt:2};
+  assert.deepEqual(runProgress(run),{text:'2 answers ready. Fill the form, or check them first with Show details.',level:'idle',key:'answers-ready'});
+  // Once filled, they are no longer waiting; new answers after that wait again.
+  assert.equal(runProgress({...run,filledAt:3}).key,'');
+  assert.equal(runProgress({...run,filledAt:3,answersAt:4}).key,'answers-ready');
+  // ChatGPT still working, or Auto-fill running, comes first.
+  assert.equal(runProgress({...run,responseMonitor:{kind:'answers',status:'waiting'}}).key,'chatgpt-working');
+  assert.equal(runProgress({...run,autopilot:{active:true,page:1}}).key,'auto-filling');
+  assert.equal(runProgress({answers:[{id:'a',answer:null}],answersAt:2}).key,'');
+});

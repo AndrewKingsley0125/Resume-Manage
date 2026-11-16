@@ -12,7 +12,7 @@ const text = (value, limit = 200000) => typeof value === 'string' ? value.slice(
 
 function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResume, now = Date.now}) {
   let state = {connections:[], jobs:[]};
-  let server = null, error = '', pairingCode = crypto.randomBytes(16).toString('hex');
+  let server = null, error = '';
   const busy = new Set();
   const eventWaiters = new Map();
   if (statePath && fs.existsSync(statePath)) {
@@ -22,6 +22,18 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     } catch (_) { error = 'Saved extension state could not be read.'; }
   }
   state.connections.forEach(c => {c.lastSeen = 0;});
+  // Every linked browser belongs to a profile. A browser linked before that rule takes the
+  // profile of the last job it ran; one that never ran a job is removed and pairs again.
+  {
+    const before = state.connections.length;
+    state.connections = state.connections.filter(c => {
+      if (c.profileId) return true;
+      const last = state.jobs.filter(j => j.connectionId === c.id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).at(-1);
+      if (last) c.profileId = last.profileId;
+      return !!c.profileId;
+    });
+    if (state.connections.length !== before) for (const job of state.jobs) if (!state.connections.some(c => c.id === job.connectionId) && job.status !== 'completed') job.status = 'unlinked';
+  }
   function persist() {
     if (!statePath) return;
     const tmp = statePath + '.tmp';
@@ -33,11 +45,38 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     if (!profile) throw fail('Profile no longer exists.', 404);
     return profile;
   }
-  const safeConnection = c => ({id:c.id, name:c.name, connected:c.lastSeen > 0 && now() - c.lastSeen < 90000, lastSeen:c.lastSeen});
-  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, exported:!!job.files, error:job.error || ''});
-  function dashboard() {
-    return {port:PORT, running:!!server && server.listening, error, pairingCode, maxConnections:MAX_EXTENSIONS,
+  const safeConnection = c => ({id:c.id, name:c.name, connected:c.lastSeen > 0 && now() - c.lastSeen < 90000, lastSeen:c.lastSeen, pairedAt:c.pairedAt || null, profileId:c.profileId || null});
+  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at})), lastCommand:job.lastCommand || null});
+  // Steps the app can start for a job; its extension runs them and reports back.
+  const COMMANDS = ['open','prepare','confirmResume','auto','scan','ask','fill','complete','focus','details'];
+  const pendingCommands = job => (job.commands || []).filter(c => !c.done);
+  const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Mark ended'};
+  const STATUS_EVENTS = {'tabs-opened':'Job window opened', 'tabs-ready':'Job page and ChatGPT ready', 'questions-scanned':'Questions scanned', 'answers-reviewed':'Answers approved for filling', 'filled':'Answers filled on the form'};
+  function logEvent(job, text, level = 'info') {
+    const message = String(text || '').trim();
+    if (!message) return;
+    const events = job.events || (job.events = []);
+    if (events.length && events.at(-1).text === message) return;
+    events.push({at:now(), text:message.slice(0, 400), level});
+    if (events.length > 40) events.splice(0, events.length - 40);
+  }
+  const profileName = id => {const p = getProfiles().find(item => item.id === id);return p ? [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed profile' : '';};
+  // Each linked browser belongs to one profile and runs only that profile's jobs: the
+  // profile's own pairing code is the only way to link one.
+  const profileCodes = new Map();
+  function codeFor(profileId) {
+    if (!profileId) return '';
+    if (!profileCodes.has(profileId)) profileCodes.set(profileId, crypto.randomBytes(16).toString('hex'));
+    return profileCodes.get(profileId);
+  }
+  function dashboard(profileId) {
+    return {port:PORT, running:!!server && server.listening, error, pairingCode:codeFor(profileId), maxConnections:MAX_EXTENSIONS,
       connections:state.connections.map(safeConnection), jobs:state.jobs.map(summary)};
+  }
+  function rotateCode(profileId) {
+    if (!profileId) throw fail('Choose a profile.');
+    profileCodes.set(profileId, crypto.randomBytes(16).toString('hex'));
+    return dashboard(profileId);
   }
   function assign(profileId, url, connectionId, style = {}) {
     if (!server || !server.listening) throw fail('The local extension service is offline.');
@@ -45,12 +84,30 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     if (!profile || profile.applicationMode !== 'extension') throw fail('Choose an extension-mode profile.');
     const links = parseJobLinks(url);
     if (links.length !== 1 || !(profile.extensionJobLinks || []).includes(links[0])) throw fail('Save this job link on the profile first.');
-    if (!state.connections.some(c => c.id === connectionId)) throw fail('Select a linked extension.');
+    const client = state.connections.find(c => c.id === connectionId);
+    if (!client) throw fail('Select a linked extension.');
+    if (client.profileId !== profileId) throw fail(`${client.name} runs ${profileName(client.profileId) || 'another profile'}'s jobs. Pair a separate browser for this profile.`, 409);
     if (state.jobs.some(j => j.profileId === profileId && j.url === links[0] && !['completed','unlinked'].includes(j.status))) throw fail('This job is already assigned.');
     if (!style || typeof style !== 'object' || Array.isArray(style)) style = {};
     const job = {id:crypto.randomUUID(), profileId, connectionId, url:links[0], status:'assigned', createdAt:now(), style};
+    logEvent(job, `Sent to ${client.name}`);
     state.jobs.push(job);persist();
     for (const finish of [...(eventWaiters.get(connectionId) || [])]) finish();
+    return summary(job);
+  }
+  function command(profileId, jobId, action) {
+    if (!server || !server.listening) throw fail('The local extension service is offline.');
+    if (!COMMANDS.includes(action)) throw fail('Unknown command.');
+    const job = state.jobs.find(j => j.id === jobId && j.profileId === profileId);
+    if (!job) throw fail('Job not found.', 404);
+    if (['completed','unlinked'].includes(job.status)) throw fail('This application has ended.', 409);
+    const client = state.connections.find(c => c.id === job.connectionId);
+    if (!client) throw fail('This job\'s browser is no longer linked.', 409);
+    if (pendingCommands(job).some(c => c.action === action)) throw fail('That step is already waiting for the browser.', 409);
+    const entry = {id:crypto.randomUUID(), action, at:now()};
+    if (COMMAND_NAMES[action]) logEvent(job, `You started: ${COMMAND_NAMES[action]}`);
+    job.commands = [...pendingCommands(job), entry];persist();
+    for (const finish of [...(eventWaiters.get(client.id) || [])]) finish();
     return summary(job);
   }
   function unlink(id) {
@@ -61,10 +118,11 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return true;
   }
   function pair(body, origin) {
-    if (body.code !== pairingCode) throw fail('Pairing code is invalid. Copy the current code from Resume Manager.', 403);
+    const owner = typeof body.code === 'string' && body.code ? [...profileCodes].find(([, code]) => code === body.code)?.[0] : undefined;
+    if (!owner) throw fail('Pairing code is invalid. Copy the current code from the profile in Resume Manager.', 403);
     if (state.connections.length >= MAX_EXTENSIONS) throw fail('All 8 extension slots are linked. Unlink one in the app first.', 409);
     const token = crypto.randomBytes(32).toString('hex');
-    const client = {id:crypto.randomUUID(), name:text(body.name, 80).trim() || 'Chrome extension', origin, tokenHash:digest(token), lastSeen:now()};
+    const client = {id:crypto.randomUUID(), name:text(body.name, 80).trim() || 'Chrome extension', origin, tokenHash:digest(token), lastSeen:now(), pairedAt:now(), profileId:owner};
     state.connections.push(client);persist();return {id:client.id, token};
   }
   function authenticate(req, origin) {
@@ -102,13 +160,43 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       if(!stat.isFile() || stat.isSymbolicLink() || stat.size>10*1024*1024)throw fail('Generated DOCX is not available for upload.',409);
       return {name:'resume.docx',type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',base64:fs.readFileSync(absolute).toString('base64')};
     }
+    // What the job is doing right now, for the app's status view. Allowed during other work.
+    if (kind === 'progress') {
+      const level = ['attention','busy','idle'].includes(body.level) ? body.level : 'idle';
+      const key = /^[a-z-]{1,40}$/.test(body.key || '') ? body.key : '';
+      const changed = !job.progress || job.progress.text !== text(body.text, 400).trim();
+      job.progress = {text:text(body.text, 400).trim(), level, key, at:now()};
+      if (changed) logEvent(job, job.progress.text, level === 'attention' ? 'attention' : 'info');
+      // The resume waiting for review, while it waits; gone once it is confirmed or replaced.
+      if (key === 'confirm-resume' && typeof body.pendingResume === 'string') job.pendingResume = text(body.pendingResume, 200000);
+      else delete job.pendingResume;
+      // The job page's own title and icon, so the app can show the job before its JD is read.
+      // Only a small inline image is kept; anything else keeps the icon it had.
+      if (typeof body.pageTitle === 'string' || typeof body.icon === 'string') {
+        const icon = typeof body.icon === 'string' && body.icon.length <= 60000 && /^data:image\/(png|x-icon|vnd\.microsoft\.icon|svg\+xml|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(body.icon) ? body.icon : (job.page && job.page.icon || '');
+        job.page = {title:typeof body.pageTitle === 'string' ? text(body.pageTitle, 200).trim() : (job.page && job.page.title || ''), icon};
+      }
+      persist();return {ok:true};
+    }
+    // The extension finished (or could not run) a command the app sent.
+    if (kind === 'command-result') {
+      const command = (job.commands || []).find(c => c.id === body.commandId);
+      if (!command) throw fail('Unknown command.', 404);
+      command.done = true;
+      // Bringing the window forward is not a step of the application: only a failure is kept.
+      if (!['focus','details'].includes(command.action) || body.ok !== true) {
+        job.lastCommand = {action:command.action, ok:body.ok === true, message:text(body.message, 600).trim(), at:now()};
+        logEvent(job, `${COMMAND_NAMES[command.action] || command.action}: ${job.lastCommand.message || (job.lastCommand.ok ? 'done' : 'failed')}`, job.lastCommand.ok ? 'info' : 'error');
+      }
+      job.commands = (job.commands || []).filter(c => !c.done).concat([]);persist();return {ok:true};
+    }
     if (job.status === 'completed') throw fail('Application already marked ended.', 409);
     if (busy.has(id)) throw fail('Another operation for this job is in progress.', 409);
     if (kind === 'jd') {
       if (job.files) throw fail('Files already exported. Start a new assignment to change its JD.', 409);
       if (!text(body.description).trim()) throw fail('Job description is empty.');
       job.jd = text(body.description).trim();job.company = text(body.company, 250).trim();job.title = text(body.title, 250).trim();
-      job.status = 'jd-received';job.error = '';persist();return detail(job);
+      job.status = 'jd-received';job.error = '';logEvent(job, `Job description read${job.title ? ': ' + job.title : ''}`);persist();return detail(job);
     }
     if (kind === 'resume') {
       if (!job.jd) throw fail('Send the job description first.');
@@ -117,22 +205,26 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       try {
         const result = await exportResume(profileFor(job), text(body.response), job);
         if (!result || result.error) throw fail(result && result.error || 'Resume export failed.');
-        job.files = result.files;job.resume = result.resume;job.status = 'resume-exported';job.error = '';persist();return detail(job);
-      } catch (e) {job.error = e.message;persist();throw fail(e.message, e.status || 400);} finally {busy.delete(id);}
+        job.files = result.files;job.resume = result.resume;job.status = 'resume-exported';job.error = '';logEvent(job, 'Resume exported (PDF and DOCX)');persist();return detail(job);
+      } catch (e) {job.error = e.message;logEvent(job, `Resume export failed: ${e.message}`, 'error');persist();throw fail(e.message, e.status || 400);} finally {busy.delete(id);}
     }
     if (kind === 'status') {
       if (!['tabs-opened','tabs-ready','questions-scanned','answers-reviewed','filled'].includes(body.status)) throw fail('Invalid job status.');
+      if (job.status !== body.status) logEvent(job, STATUS_EVENTS[body.status]);
       job.status = body.status;persist();return summary(job);
     }
     if (kind === 'complete') {
       if (body.confirmed !== true) throw fail('Confirm manually that the application ended.');
-      job.status = 'completed';job.completedAt = now();persist();return summary(job);
+      job.status = 'completed';job.completedAt = now();logEvent(job, 'Marked ended');persist();return summary(job);
     }
     throw fail('Unknown operation.', 404);
   }
   function clientState(client) {
     const jobs = state.jobs.filter(j => j.connectionId === client.id);
-    return {client:safeConnection(client),jobs:jobs.map(summary),cursor:jobs.at(-1)?.id || ''};
+    // The extension shows which profile this browser runs.
+    // The cursor changes when a job is assigned or a command is queued, so a waiting extension wakes.
+    const queued = jobs.flatMap(j => pendingCommands(j).map(c => c.id)).join(',');
+    return {client:{...safeConnection(client),profileName:profileName(client.profileId)},jobs:jobs.map(summary),cursor:(jobs.at(-1)?.id || '') + (queued ? '|' + queued : '')};
   }
   function waitForAssignment(client, res) {
     return new Promise(resolve => {
@@ -177,7 +269,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
         client.lastSeen = now();
         return reply(200,clientState(client));
       }
-      const match = /^\/v1\/jobs\/([a-f0-9-]+)(?:\/(jd|resume|status|complete|docx))?$/.exec(req.url);
+      const match = /^\/v1\/jobs\/([a-f0-9-]+)(?:\/(jd|resume|status|complete|docx|progress|command-result))?$/.exec(req.url);
       if (!match || req.method !== (!match[2] || match[2]==='docx' ? 'GET' : 'POST')) throw fail('Unknown endpoint.', 404);
       return reply(200, await action(client, match[1], match[2] || 'detail', body));
     } catch (e) {reply(e.status || 500, {error:e.status ? e.message : 'Local extension service failed. See the app log.'});if (!e.status) console.error('Extension bridge:', e);}
@@ -193,6 +285,6 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return server && server.address();
   }
   async function stop() {if (server) {const current = server;server = null;current.closeAllConnections();await new Promise(resolve => current.close(resolve));}}
-  return {start, stop, dashboard, assign, unlink, rotateCode:() => {pairingCode = crypto.randomBytes(16).toString('hex');return dashboard();}};
+  return {start, stop, dashboard, assign, unlink, rotateCode, command};
 }
 module.exports = { createExtensionBridge, PORT };

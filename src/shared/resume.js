@@ -30,9 +30,11 @@
     array(data.education, 'education');
     data.education.forEach((e,i) => { exact(e, ['degree'], `education[${i}]`); string(e.degree, `education[${i}].degree`); });
     if (profile) {
-      const expected = (profile.workHistory || []).map(w => w.company || '').sort();
-      const actual = data.experience.map(e => e.company).sort();
-      if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error('Experience must contain each profile employer exactly once, with its exact name.');
+      // One role per profile employer. The JSON may word an employer's name its own way
+      // ("Snowflake Inc."); that name is what the resume shows.
+      const expected = (profile.workHistory || []).length;
+      if (data.experience.length !== expected) throw new Error(`Experience must contain one entry per profile employer (${expected}), not ${data.experience.length}.`);
+      if (data.experience.some(role => !role.company.trim())) throw new Error('Every experience entry needs a company name.');
     }
     return data;
   }
@@ -63,17 +65,40 @@
     });
     return base;
   }
+  const plainName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Pairs each profile job with its JSON role: the same name, then the same name in
+  // other wording ("Snowflake" / "Snowflake Inc."), then the same position.
+  function pairRoles(work, roles) {
+    const used = new Set(), pairs = new Array(work.length).fill(-1);
+    const tests = [
+      (w, r) => r.company === w.company,
+      (w, r) => !!plainName(w.company) && plainName(r.company) === plainName(w.company),
+      (w, r) => {const a = plainName(w.company), b = plainName(r.company);return !!a && !!b && (` ${b} `.includes(` ${a} `) || ` ${a} `.includes(` ${b} `));},
+    ];
+    for (const test of tests) work.forEach((w, i) => {
+      if (pairs[i] >= 0) return;
+      const j = roles.findIndex((r, k) => !used.has(k) && r && typeof r.company === 'string' && test(w, r));
+      if (j >= 0) {pairs[i] = j;used.add(j);}
+    });
+    work.forEach((w, i) => {
+      if (pairs[i] >= 0) return;
+      const j = i < roles.length && !used.has(i) ? i : roles.findIndex((r, k) => !used.has(k));
+      if (j >= 0) {pairs[i] = j;used.add(j);}
+    });
+    return pairs;
+  }
   function experience(profile, data) {
     const roles = Array.isArray(data.experience) ? data.experience : [];
-    const used = new Set();
-    return (profile.workHistory || []).map((work,i) => {
-      let index = roles.findIndex((r,j) => !used.has(j) && r && r.company === work.company);
-      if (index < 0 && !used.has(i)) index = i;
-      used.add(index);
-      const role = roles[index] || {};
+    const work = profile.workHistory || [];
+    const pairs = pairRoles(work, roles);
+    return work.map((work,i) => {
+      const role = roles[pairs[i]] || {};
       const all = Array.isArray(role.sentences) ? role.sentences.filter(s => typeof s === 'string') : [];
       const count = typeof work.bulletsCount === 'number' && work.bulletsCount >= 0 ? work.bulletsCount : null;
-      return {company:work.company || '',location:work.location || '',period:work.period || '',workType:work.workType || '',workArrangement:work.workArrangement || '',title:typeof role.title === 'string' ? role.title : '',overview:typeof role.overview === 'string' ? role.overview : '',sentences:count === null ? all : all.slice(0,count),technologies:Array.isArray(role.technologies) ? role.technologies.filter(s => typeof s === 'string') : []};
+      // The profile's employer name, unless the profile opts into the name written in the JSON.
+      const jsonName = typeof role.company === 'string' ? role.company.trim() : '';
+      const company = profile.useJsonEmployerNames === true && jsonName ? jsonName : work.company || '';
+      return {company,location:work.location || '',period:work.period || '',workType:work.workType || '',workArrangement:work.workArrangement || '',title:typeof role.title === 'string' ? role.title : '',overview:typeof role.overview === 'string' ? role.overview : '',sentences:count === null ? all : all.slice(0,count),technologies:Array.isArray(role.technologies) ? role.technologies.filter(s => typeof s === 'string') : []};
     });
   }
   /**

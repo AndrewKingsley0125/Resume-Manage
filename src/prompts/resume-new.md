@@ -1,352 +1,290 @@
 # MASTER SOFTWARE ENGINEER RESUME-GENERATION PROMPT
 
-## 1. TASK, INPUTS, AND PRIORITIES
+## 1. TASK AND CANDIDATE PROFILE
 
-Given the candidate profile and complete job description (JD), generate a tailored US software engineering resume using the exact JSON schema in Section 9. Complete drafting, research, and internal revisions within one response without requesting a base resume, project history, metrics, or follow-up information.
+Generate a highly tailored, ATS-friendly US software engineering resume based on the candidate profile and complete job description (JD). Produce a technically credible, senior-level resume emphasizing specific projects, architecture, ownership, engineering scale, measurable accomplishments, and JD alignment.
 
-CANDIDATE PROFILE (populated from the application):
+Complete the entire process independently without requesting additional information or clarification.
+
+### Candidate Profile
 
 {{CANDIDATE_PROFILE}}
 
-Apply these priorities in order: supplied candidate facts and factual integrity; eligibility; output schema; coherent role positioning; JD coverage; writing preferences. An internal alignment score must never override higher-priority requirements.
+Preserve employer names, dates, education, and career progression. Order experience by end date, newest first. Calculate years of experience without double-counting overlapping employment. Align functional role titles to the JD without inventing promotions or management authority. The top-level resume `title` and the most recent employer's `experience[0].title` must share a consistent core role, seniority, and supported specialization. Preserve the supplied employer title; tailor the resume headline to the JD only within the scope supported by that title and the demonstrated work. Exact wording may differ, but do not imply a different career track, higher seniority, or unsupported management authority. Validate these two fields together rather than generating them independently.
 
-Profile rules:
-1. Preserve exact employer names and employment dates; order roles in reverse chronology. The application supplies employment metadata and contact details, so do not add fields for them.
-2. Generate a JD-aligned top-level title and functional experience.title values while preserving each supplied career level and credible scope. Do not invent promotions or management authority. Use Lead only when supported; years alone do not establish Staff or Principal scope.
-3. Calculate completed years of experience from the employment dates without double-counting overlaps or extending beyond the current date or supplied end dates.
-4. Preserve supplied education. Do not invent degrees, certifications, clearances, contact details, or other fixed credentials.
-5. A sample resume supplies style and structure only; never transfer its candidate facts.
-6. The top-level company means the hiring company; experience.company means a supplied employer.
+## 2. JOB ELIGIBILITY
 
-## 2. ELIGIBILITY
+Analyze the entire JD before generating the resume.
 
-Read the complete JD before drafting. Reject roles requiring security clearance or onsite/hybrid work without a fully remote option.
+Reject positions requiring:
+- Security clearance.
+- Mandatory onsite or hybrid work without a fully remote option.
 
-Continue when clearance is merely preferred, location is unspecified or unclear, a fully remote option is explicitly available, or remote work includes occasional travel. Historical work arrangements do not affect eligibility.
+Accept fully remote positions, unspecified work arrangements, occasional travel, and preferred rather than required clearance.
 
-For an ineligible role, return only the appropriate error object inside a json code block:
+For an ineligible position, return only:
 
-{"error":"The position requires security clearance."}
+`{"error":"The position requires security clearance."}`
 
-{"error":"The position requires onsite or hybrid work without a fully remote option."}
+or
 
-If both apply, use:
+`{"error":"The position requires onsite or hybrid work without a fully remote option."}`
 
-{"error":"The position requires security clearance. The position requires onsite or hybrid work without a fully remote option."}
+Combine both reasons if applicable.
 
-Eligibility errors bypass drafting and review and are the only exception to the resume schema.
+## 3. JD ANALYSIS AND COMPANY RESEARCH
 
-## 3. JD ANALYSIS AND EVIDENCE
+Identify all required and preferred technical skills, engineering responsibilities, domain knowledge, collaboration expectations, and leadership requirements.
 
-### Requirement map
+Prioritize central JD requirements while preserving the candidate's experience and seniority.
 
-Internally analyze responsibilities, required and preferred qualifications, company context, and described work. Establish one coherent specialization appropriate to the profile and JD.
+Research official employer information when available to identify historically appropriate engineering teams, projects, products, technologies, and business context. Distinguish company-level information from the candidate's personal accomplishments.
 
-### Hard-skill and soft-skill coverage check
+When exact project details are unavailable, develop technically realistic proposed project narratives consistent with each employer, employment period, role, and JD. Do not treat proposed personal experience as verified historical fact.
 
-Create two separate internal requirement lists from the complete JD before drafting.
+Ensure each employer has a distinct technical story rather than repeating similar projects across companies.
 
-Hard skills: Capture named languages, frameworks, databases, cloud services, APIs, architecture patterns, tools, methodologies, testing practices, security requirements, and domain capabilities. Preserve specific terms: a broad category such as AWS does not substitute for a named service such as Lambda.
-
-Soft skills: Capture explicit requirements such as communication, collaboration, problem-solving, ownership, mentoring, leadership, stakeholder management, prioritization, adaptability, and working through ambiguity. Preserve the JD's specific wording where it can be used naturally.
-
-For each item, track its priority, available support, and planned location. Required skills and central responsibilities receive the strongest coverage; preferred skills follow when relevant and chronologically plausible.
-
-1. Place each relevant named hard skill in its appropriate technical skills category. Demonstrate central hard skills in at least one role through a concrete application, technical decision, or deliverable. Listing a technology alone does not demonstrate its use.
-2. Demonstrate each central soft skill through a specific action and its consequence. Use the actual skill term or a close grammatical form naturally when useful for matching. Describe the decision, coordination, or behavior and what it accomplished.
-3. Do not rely only on implied soft skills. Mentoring contributions should explicitly use mentored or mentoring; collaboration contributions should identify partners and shared work. Do not append a generic trait to an otherwise unrelated accomplishment.
-4. Place JD-derived soft skills in the final skills category, named "Soft Skills", and demonstrate central soft skills through concrete actions and outcomes across relevant roles. Mention selected strengths in the summary without crowding it. Avoid generic traits unrelated to the JD. Technical methods such as Agile or Scrum belong in the appropriate technical category.
-5. Where useful, include the full term and acronym once. Preserve exact product names, recognized spellings, and necessary technical terminology.
-6. During the mandatory reviews in Section 8, compare both lists with the completed resume. Identify missing required skills, central responsibilities, and soft skills that are only listed or implied. Revise the most suitable existing sentence or category to close meaningful gaps without unrelated work or repetitive bullets.
-7. Treat missing fixed qualifications separately from wording gaps. Do not manufacture degrees, certifications, clearances, additional years, or management authority to obtain a match. Maintain employer, employment-period, and technical plausibility in proposed draft experience.
-8. Necessary skill coverage takes priority over cosmetic repetition reduction. Repeat exact terms when they clarify experience or cover a central requirement; avoid keyword stuffing, hidden keywords, unsupported proficiency labels, and ATS guarantees.
-
-Keep requirement lists, coverage maps, and detailed audits internal.
-
-### Research and generated details
-
-Search official employer sources and primary technical documentation for relevant team names, project names, product context, technology use, and historical availability. Match information to the employment period; present-day information alone does not establish historical usage.
-
-Public sources establish employer context, not the candidate's membership, participation, ownership, or results. Names used in generated role narratives remain proposed draft context unless personal involvement is independently established; finding a name online does not verify participation.
-
-The candidate profile supplies employment history and fixed credentials only; do not assume personal project details or measurements are available. Draft realistic proposed responsibilities, technical decisions, projects, and accomplishments consistent with researched employer context, career level, duration, and JD. These are proposed draft content, not independently verified personal experience. Apply Section 6E to numerical outcomes; do not describe generated details as verified or actually measured.
-
-In each overview's first sentence, explicitly include both the team name and project name. Search relevant employer sources and preserve discovered names exactly, checking relevance to the employment period. If either name cannot be found, use a plausible draft name consistent with the employer, period, and role. Do not substitute generic functional descriptions for names. Prefer team names of one or two words; preserve researched official names exactly even when longer.
-
-Treat draft names as proposed content internally; do not describe them as verified or imply that public sources establish personal participation. Do not include parenthetical confirmation notes, verification notices, or drafting comments in the overview.
-
-If search is unavailable or inconclusive, use the draft-name fallback without claiming research or verification. Complete the draft without follow-up questions. Keep source records, naming provenance, and research notes internal.
+Keep research and analysis internal.
 
 ## 4. PROFESSIONAL SUMMARY
 
-Write one paragraph of four connected sentences, approximately 60–80 words:
+Write exactly four connected sentences, approximately 60–80 words.
 
-1. Establish engineering level, JD-relevant specialization, completed years of experience, and relevant domains.
-2. Describe ownership, architecture, technical direction, or cross-team influence appropriate to the level.
-3. Explain the hands-on engineering practices most relevant to the JD.
-4. Connect technical depth and product judgment to practical value for users or engineering teams.
+Communicate:
+1. Engineering seniority, completed years of experience, and JD-relevant specialization.
+2. Architecture ownership, technical leadership, and engineering complexity.
+3. Core technologies, hands-on engineering expertise, and production experience.
+4. Technical accomplishments and value delivered to products, platforms, or engineering teams.
 
-Establish a professional identity rather than listing technologies. Include only a few central technical terms, with leadership or mentoring where supported by the experience. Use present-tense professional statements where natural. Do not name the hiring company, write a career objective, or use promotional opening adjectives.
+Use natural American professional English. Avoid generic self-promotion, excessive keywords, and career objectives.
 
-## 5. SKILLS
+## 5. TECHNICAL SKILLS
 
-Use approximately 6–8 compact, recognizable categories when useful; fewer are acceptable for a narrow role. Choose categories suited to the JD.
+Create approximately 6–8 logically organized categories aligned with the JD.
 
-Each skills object contains exactly one category name mapped to an array of individual skill strings. Include relevant technologies, technical practices, and domain concepts, placing each in its best-fitting category without duplication. Exclude proficiency ratings, descriptive sentences, and unrelated inventories.
+Include relevant programming languages, frameworks, cloud technologies, databases, architecture patterns, infrastructure, development practices, and specialized tools.
 
-Make "Soft Skills" the final skills category and limit it to 5–6 distinct, JD-derived skills. Prioritize explicit requirements and capabilities central to the role; combine overlapping terms and exclude generic or lower-priority traits. Do not invent extra traits solely to reach the count if the JD supports fewer. Include this category within the overall category target. Section 3 governs explicit hard-skill and soft-skill coverage and their demonstration in experience. Keep all listed skills consistent with the narrative and historical plausibility.
+- Prioritize required skills before preferred skills.
+- Include only technologies consistent with the candidate's experience.
+- Avoid duplicated or unrelated skills.
+- Use individual skill strings within each category.
+- Make **Soft Skills** the final category, with up to 5–6 relevant capabilities.
+- Demonstrate important listed skills through actual experience contributions.
 
 ## 6. PROFESSIONAL EXPERIENCE
 
-Create one experience object per supplied employer, containing company, title, overview, sentences, and technologies. Before drafting each role, define its context, ownership, core stack, and distinct contributions internally.
+Create one experience object per employer.
 
-### A. Role overview
+Each role must contain `company`, `title`, `overview`, `sentences`, and `technologies`.
 
-Write two connected sentences, approximately 30–45 words total.
+Build a coherent engineering narrative showing what the team developed, what the system did, what the candidate owned, how it was implemented, and what was accomplished.
 
-Naturally incorporate the team name and one or two major project names into the first sentence, along with the business purpose or users served.
+### A. Role Overview — Team, Project, Ownership, and Accomplishment
 
-Use the second sentence to communicate the candidate's ownership, architectural contribution, or most meaningful outcome.
+Write exactly two connected sentences (45–65 words) for each employer. The first sentence must identify the **specific engineering team**, **named project**, and clearly explain what the project does, who uses it, and its purpose. The second sentence must describe the candidate's **specific technical ownership and primary accomplishment**, including at least one meaningful quantitative metric demonstrating engineering scale, delivered capability, or measurable impact. Use concrete technologies and engineering responsibilities appropriate to the role and seniority. Avoid vague project descriptions, generic achievements, and repeating contribution bullets. Every overview must clearly communicate **team, project, functionality, ownership, and quantified accomplishment**.
 
-Vary sentence openings and narrative structure across employers. Favor candidate-centered, architecture-centered, or impact-centered phrasing based on the actual contribution.
+### B. Engineering Contribution Bullets
 
-Avoid repetitive templates such as "The [Team] team developed [Project]" or "[Team] worked on [Project]."
+Write technically detailed, accomplishment-oriented bullets following:
 
-Prefer strong, specific verbs such as architected, designed, modernized, built, scaled, and implemented when they accurately describe the contribution.
+**Engineering action + specific technical ownership + implementation approach + measurable result.**
 
-Do not imply the candidate created an entire project when their responsibility covered only a component or service.
+Each bullet must explain a distinct contribution and demonstrate meaningful engineering responsibility, implementation complexity, or technical decision-making.
 
-Preserve the requirement to bold team and project names.
+Include:
+- Concrete services, systems, components, or features delivered.
+- Relevant architecture, technologies, algorithms, or engineering practices.
+- Important technical challenges, design decisions, or trade-offs where appropriate.
+- Production-scale accomplishments, operational improvements, or measurable outcomes.
+- Collaboration, mentoring, or cross-team influence when relevant.
 
-Ensure each overview sounds distinct, natural, and appropriate to the employer, engineering domain, and seniority.
+Prefer approximately 25–40 words per bullet.
 
-Avoid repeating detailed implementation decisions already explained in contribution bullets.
+**Bullet Allocation**
+- Most recent role: approximately 7 bullets.
+- Intermediate roles: allocate according to relevance, duration, and responsibility.
+- Earlier roles: approximately 2–3 bullets.
 
-### B. Contribution selection and seniority
+Show increasing technical ownership and seniority across the career. Avoid generic responsibilities, repeated accomplishments, and unsupported organization-wide ownership.
 
-Represent realistic breadth of work appropriate to each role’s duration and scope. Distribute contributions across distinct initiatives, ongoing responsibilities, and improvements rather than forcing all bullets under one project or listing every project name.
+### C. Engineering Metrics and Quantification
 
-Give each employer a distinct engineering story and show plausible progression in complexity, independence, ownership, and influence. Preserve the supplied level even when earlier roles have narrower scope.
+Include meaningful quantitative metrics in **every employer overview and at least 80% of contribution bullets**, aiming for 5–6 quantified bullets in recent senior-level roles and 2–3 in earlier roles. Automatically select diverse metrics appropriate to each project's technical responsibilities, including services, APIs, integrations, transactions, requests, data volumes, models, GPUs, infrastructure scale, users, adoption, reliability, performance, cost, and business impact. Prioritize concrete engineering scale, architectural complexity, technical ownership, and measurable accomplishments rather than relying mainly on percentages or time savings. Integrate one or two complementary metrics naturally into quantified bullets, connecting them to implementation and results. Where actual measurements are unavailable, use realistic, seniority-appropriate illustrative estimates grounded in the employer and project context, and identify them as estimates rather than verified achievements. During final review, count quantified overviews and bullets, and revise any role that fails these coverage requirements.
 
-Balance delivery, modernization, performance, reliability, security, testing, operations, and reusable capabilities according to the JD. Full-stack roles should cover frontend, backend, APIs, and data; specialized roles should focus on their relevant scope.
+### D. Technologies Per Role
 
-For senior work, show meaningful engineering constraints, consequential decisions, hands-on execution, and proportionate results. Communicate leadership through architecture, standards, design reviews, documentation, mentoring, adoption, or coordinated delivery. Identify collaboration partners and what was accomplished together. Do not make every contribution an organization-wide transformation or repeat the same leadership claim at every employer.
+List technologies directly supported by each role's overview and contributions.
 
-### C. Contribution sentence structure
+- Recent roles: approximately 6–12 technologies.
+- Earlier roles: approximately 3–8 technologies.
+- Order by relevance and importance.
+- Avoid duplicates, irrelevant keywords, and technologies absent from the experience narrative.
 
-Follow this flexible structure:
+## 7. WRITING AND FORMATTING
 
-Action + concrete deliverable or technical decision + relevant approach + meaningful outcome or capability.
+Use clear, natural, technically specific American professional English.
 
-Begin directly with the contribution, without a work-area label or heading. Give each bullet a distinct focus. Keep the explanation specific about implementation and impact, preserving Section 6E’s metric standards and Section 7’s keyword highlighting. Usually use 25–40 words per bullet. Allow a slightly longer sentence only when necessary to preserve an important decision or tradeoff.
+- Write accomplishments in active voice and appropriate tense.
+- Use precise engineering terminology without excessive jargon.
+- Demonstrate seniority through architectural decisions, ownership, technical challenges, and outcomes.
+- Avoid vague phrases, promotional language, repetitive verbs, and keyword stuffing.
+- Maintain consistency between overview, bullets, and technologies.
+- Keep the resume suitable for approximately two pages.
 
-Each bullet must:
-1. Cover one main contribution or a tightly connected set of actions.
-2. Make individual ownership clear.
-3. Explain how relevant technologies were applied.
-4. Include rationale when it clarifies the decision.
-5. State a meaningful result or useful capability.
-6. Be independently understandable and distinct from adjacent bullets.
+### Keyword Highlighting
 
-Vary emphasis and sentence construction naturally; do not mechanically force every element into every sentence. Put each contribution in its own sentences string.
+Use balanced `**` markers only inside the JSON string values for `summary`, each employer's `overview`, and each contribution in `sentences`. Include the literal markers in the JSON even when it is displayed in a code block; the downstream resume renderer must interpret them as bold.
 
-### D. Contribution allocation
+Apply these mandatory highlighting rules:
 
-Determine bullet counts from the number of employers, each role’s employment duration, supplied seniority, JD relevance, and distinct contributions.
+- Bold every meaningful engineering metric wherever it occurs in these fields, including the number, unit, and necessary qualifier as one complete phrase, such as `**20 million requests per day**`, `**99.99% availability**`, or `**an estimated 30% reduction**`. Preserve estimate labels. Do not bold employment dates or years of experience merely because they contain numbers.
+- Identify a concise priority set of central JD technologies and engineering concepts during JD analysis. Bold their first occurrence in the summary and their first occurrence within each employer's overview and contributions, when present. Do not add keywords solely to meet highlighting requirements.
+- Bold each team name and project name on its first occurrence in the employer's overview.
+- Selectively bold meaningful architecture, ownership, and leadership capabilities when they add useful emphasis. Prioritize required metric and keyword highlighting over this optional emphasis.
+- Keep spans short and specific. Do not bold entire sentences, generic action verbs, unrelated terms, or repeated occurrences of the same keyword within an employer unless needed for a complete metric phrase.
 
-Use approximately 7 bullets for the most recent role and 2–3 for the earliest as starting targets, adjusting when duration, relevance, or scope warrants it. Allocate bullets across intervening roles proportionately rather than assigning fixed counts by position. A longer, more relevant, or higher-scope role may receive more space than a newer one. For a single-employer profile, use the most-recent-role target.
+Do not apply Markdown formatting to company names, titles, skills, technologies, or education.
 
-Preserve supplied career levels; do not assume earlier roles were junior. Keep contributions appropriate to the responsibilities and technical complexity plausible within each employment period.
+Before final output, inspect every eligible string: verify that every meaningful metric is enclosed in a complete bold span, required first occurrences of priority keywords and team/project names are highlighted, all `**` markers are paired without nesting, and no prohibited field contains formatting. Repair missing or malformed highlighting without changing the other content requirements.
 
-Strengthen or consolidate existing relevant bullets before adding another, without combining unrelated work. Add bullets when necessary to demonstrate distinct, important JD requirements that remain inadequately covered. Every contribution must follow the draft-content rules and add substantive information rather than repeat keywords, accomplishments, or benefits.
+### Narrative Consistency
 
-Keep the overall content suitable for a two-page resume. Favor concise contributions near the lower end of the permitted word range, reserving longer bullets for meaningful technical decisions or tradeoffs. Do not add filler merely to reach a target count.
+The summary establishes the candidate's overall professional identity. Each overview explains the team, project, purpose, ownership, and quantified accomplishment. Contribution bullets provide the technical implementation and supporting achievements. Technologies summarize the actual stack.
 
-### E. Quantification and measurement
+Avoid repeating identical details across sections.
 
-Quantify contributions using the measure that best explains their value: scope, delivered output, adoption, or outcomes. Do not require every number to describe an improvement.
+## 8. MANDATORY THREE-PASS REVIEW
 
-Select measures according to the work:
-- Scope: Size, reach, complexity, or responsibility boundaries.
-- Output: Useful capabilities delivered, migrated, integrated, or automated.
-- Adoption: Actual use across relevant users, teams, or systems.
-- Outcomes: Changes in performance, reliability, time, resource efficiency, cost, quality, or business results.
+Before generating the final output, internally evaluate JD alignment using this fixed 100-point rubric:
 
-Aim for at least five meaningful quantified contributions across experience when defensible. Distribute them naturally across employers and contribution types. Do not force numbers into every bullet or add activity counts that do not explain value.
+| Evaluation Category | Points |
+|---|---:|
+| Required technical skills and qualifications | 35 |
+| Core responsibilities and relevant experience | 30 |
+| Preferred skills and domain knowledge | 15 |
+| Leadership and interpersonal capabilities | 10 |
+| Resume structure, clarity, and compliance | 10 |
 
-For every quantitative claim, internally establish the measured quantity, unit, counting boundary, relevant period or workload, plausible collection method, and relationship to the candidate’s contribution. Naming a tool alone does not establish measurability.
+Allocate points according to JD importance without double-counting requirements. Treat scores as internal estimates, not actual employer ATS results.
 
-Require a baseline and comparable conditions for improvement claims. Scope, output, and adoption counts do not require a previous baseline, but must have clear definitions and boundaries. Distinguish potential reach from actual usage, elapsed time from human effort, and delivered quantity from demonstrated value.
+### Iteration 0 — Initial Draft
 
-Choose the most informative unit rather than defaulting to percentages. Use absolute quantities, durations, financial amounts, frequencies, rates, or before-and-after values as appropriate. Use percentages only when relative comparison communicates the result clearly; distinguish relative percentage changes from percentage-point changes. Vary units naturally without imposing a variety quota.
+Generate the complete resume and calculate the initial JD alignment score.
 
-Keep attribution proportional to ownership. Do not present an employer’s total users, revenue, infrastructure, or public performance figures as the candidate’s personal achievement. Financial results require a credible connection between the technical work and the claimed financial effect.
+### Iteration 1 — Requirements and Content
 
-Show seniority through consequential decisions, engineering constraints, ownership, and coordination surrounding the measure—not through large numbers alone. Retain strong qualitative accomplishments when quantification would add little information.
+Review required skills, responsibilities, technical depth, seniority, leadership, project relevance, and accomplishment quality.
 
-Because the input supplies employment history rather than personal measurement records, generated figures are proposed draft estimates. Use rounded values prefixed with ~, avoid false precision, and do not describe estimates as verified or actually measured. Web research establishes employer context; it does not verify personal results.
+Verify that every overview explicitly communicates the team, named project, project functionality, candidate ownership, and a quantified accomplishment.
 
-During revision, preserve proposed figures that have clear definitions, reasonable scope, consistent calculations, and plausible measurement mechanisms. Clarify weak metrics before removing them, and consider whether scope, output, or adoption better communicates the contribution than an improvement percentage. Do not remove a figure solely because personal records were not supplied, and do not invent evidence to support it.
+Revise gaps and recalculate the score.
 
-Remove a figure when it remains contradictory, mathematically incorrect, misleadingly attributed, or without a defensible measurement basis. Retain the concrete contribution and keep the removal reason in the internal audit.
+### Iteration 2 — Technical and Metric Quality
 
-### F. Per-role technologies
+Review engineering plausibility, employer context, architectural complexity, implementation detail, technology consistency, and ownership boundaries.
 
-List the primary technologies and technical practices represented in each role's overview and bullets. Usually use 6–12 entries for recent roles and 3–8 for earlier roles, with fewer when appropriate. Order by importance and exclude tools added only for keyword coverage. Return individual plain strings; the application supplies the label and separators.
+**Count quantified overviews and contribution bullets.** Ensure every overview contains a meaningful metric and at least 80% of bullets contain appropriate quantitative evidence. Check that metrics cover diverse dimensions of engineering scale and are not dominated by percentages or time savings.
 
-## 7. LANGUAGE, HIGHLIGHTING, AND REPETITION
+Correct inconsistencies and recalculate the score.
 
-Use natural American professional English, active voice, and no first-person pronouns. Use past tense for completed contributions and present tense only for clearly ongoing responsibilities. Avoid filler, inflated adjectives, vague responsibility statements, unsupported superlatives, and excessive jargon.
+### Iteration 3 — Final Validation
 
-Keep summary and skills compact and allocate most space to experience. Preserve substantive technical detail while removing redundant context.
+Review the complete resume again for:
+- Comprehensive JD coverage.
+- Specific and coherent project narratives.
+- Clear individual ownership and senior-level accomplishments.
+- Required metric coverage and meaningful metric diversity.
+- Distinct, technically substantial contribution bullets.
+- Consistency between summary, overview, bullets, and technologies.
+- Accurate employment chronology, education, and professional seniority.
+- Clear writing, keyword highlighting, and valid JSON.
 
-### Keyword highlighting
+Revise remaining issues and calculate the final score.
 
-Wrap important JD keywords and short phrases in balanced ** markers inside summary, experience.overview, and experience.sentences strings. Prioritize central technologies, architecture patterns, domain capabilities, and explicitly required leadership or collaboration terms.
+### Completion Requirements
 
-In each role overview, wrap the team name and each developed project name in double asterisks (**Team Name**, **Project Name**), preserving their exact wording. Use one pair of markers for each name without nesting markers.
-
-Wrap each quantitative metric in double asterisks, including its approximation symbol, value, unit, and essential comparison context, such as **~10 hours per week**, **~20 services**, or **from ~500 ms to ~200 ms**. Apply this in summary, role overviews, and contribution bullets without highlighting the entire sentence or nesting asterisks.
-
-Highlight selectively, keeping the wording readable. Do not highlight whole sentences or generic action verbs. Highlighting does not replace demonstrated experience or improve the internal score by itself.
-
-Do not add highlighting to company, title, skills, technologies, or education. The application renders headings, employer metadata, bullet symbols, and labels; do not insert those into JSON values. Keyword and metric highlighting in the permitted fields and bold team and project names in experience.overview are the only allowed Markdown within JSON values.
-
-### Wording consistency
-
-Use standard product names, capitalization, spelling, and technical punctuation. Expand an acronym once where useful, then use its short form.
-
-Vary accurate verbs and sentence openings across the resume without rigid frequency limits or forced synonyms. Remove repeated generic benefits, duplicate accomplishments, and formulaic constructions. Ground each employer's vocabulary in its actual engineering context.
-
-Keep section purposes distinct: summary establishes professional identity; overviews establish team, project context, ownership, and one headline achievement; bullets explain execution and decisions; technology arrays identify the stack.
-
-Preserve necessary technical repetition and exact JD terminology when they clarify coverage. Do not use hidden keywords, keyword stuffing, or guarantees about ATS outcomes.
-
-## 8. MANDATORY INTERNAL REVIEW AND ALIGNMENT LOOP
-
-### Fixed scoring rubric
-
-Before reviewing the draft, use the Section 3 requirement map to establish a fixed 100-point rubric:
-
-- Required technical skills and qualifications: 35 points.
-- Central responsibilities and relevant experience: 30 points.
-- Preferred technical skills and domain knowledge: 15 points.
-- Required interpersonal and leadership capabilities: 10 points.
-- Clear structure, standard terminology, and exact schema compliance: 10 points.
-
-Allocate points within each category by JD importance. Assign each requirement to its primary category to avoid double-counting. If a category has no applicable requirements, redistribute its points proportionally among applicable categories. Keep requirements, weights, and scoring criteria unchanged across passes.
-
-Award full credit for explicit, appropriate coverage with concrete experience support where required. Award partial credit for incomplete coverage or skills-only mentions where demonstrated experience is expected. Generated details do not establish verified qualifications. Keyword repetition and highlighting earn no additional credit.
-
-This score is an internal JD alignment estimate, not an employer ATS result.
-
-### Three mandatory review passes
-
-Score the initial draft as iteration 0, then perform at least three complete review-and-revision passes after drafting, even when the initial score exceeds 95/100. A pass must inspect the complete resume, identify violations, apply necessary revisions, and reassess the result; merely asserting that a review happened is insufficient.
-
-Pass 1 — Requirements and writing:
-Check compliance with Sections 1–7 and 9, including eligibility, profile accuracy, coherent positioning, separate hard-skill and soft-skill coverage, the final Soft Skills category with 5–6 prioritized distinct skills where supported, overview purpose and length, concise contributions, seniority, metric measurability and appropriate units, highlighted team and project names, keyword highlighting, repetition, and valid JSON. Revise meaningful gaps and calculate the score.
-
-Pass 2 — Independent factual and consistency review:
-Recheck the revised resume against the original candidate profile and complete JD. Verify externally checkable names, employer context, technology claims, and employment-period plausibility using the research standards in Section 3. Consult primary sources for unresolved claims; retained sources may be reused when they directly resolve a claim. Check the team-name length preference without altering official names. Distinguish employer facts from personal participation and measured outcomes. Correct externally checkable inaccuracies while preserving plausible proposed names and metrics that meet Sections 3 and 6E; do not remove them solely because personal records are unavailable. Recheck all constraints affected by corrections and recalculate the score.
-
-Pass 3 — Complete final validation:
-Review the revised resume against the full requirement map and all prompt rules again. Resolve remaining hard-skill and soft-skill gaps, verify quantification and highlighting, remove repetition, and check contribution allocation, chronology, seniority, and JSON validity. Apply warranted changes and rescore; if no changes are needed, record that honestly.
-
-### Further revisions and stopping
-
-Complete all three mandatory passes before finishing. If the score is 95 or lower afterward, identify lost points, improve the most relevant content, and rescore using the same fixed rubric. Prioritize required skills and central responsibilities, then preferred qualifications. Strengthen existing contributions before adding bullets, and recheck factual consistency and formatting after changes.
-
-Continue revising until the honestly self-assessed ATS alignment score exceeds 95/100. Completing the minimum three passes alone is not a stopping condition. Improve the resume rather than adjusting scores to meet the target. Never inflate scores, invent qualifications, or violate factual or other prompt constraints; if the target cannot be reached within those constraints, return the strongest compliant version and briefly state the remaining constraints using Section 9’s Target not reached format.
-
-Keep requirement maps, research notes, scores, and review history internal. Return only the output specified below.
-
-### Mandatory completion gate
-
-Do not return the initial draft. Before producing the final output:
-
-1. Evaluate the initial draft using the fixed rubric.
-2. Complete Pass 1, apply necessary corrections, and rescore.
-3. Complete Pass 2 against the revised resume, apply necessary corrections, and rescore.
-4. Complete Pass 3 against the revised resume, apply necessary corrections, and rescore.
-5. After all three mandatory passes, if the score remains 95 or lower, address remaining fixable gaps and reassess. Stop when the score exceeds 95 or no further improvement is possible without violating higher-priority constraints.
-
-All three mandatory passes must occur even if the initial score exceeds 95. A pass may conclude that no correction is necessary; do not invent changes merely to demonstrate activity.
-
-Report each completed iteration's score using the output format in Section 9. Keep concrete correction details, requirement maps, research notes, and detailed audits internal. If the target cannot be reached, briefly state the remaining constraints as specified in Section 9.
-
-Never claim that a pass, research check, or correction occurred unless it was performed. Never inflate scores to reach the target.
-
-The score is a self-assessed JD alignment estimate, not an actual ATS score. The iteration scores and target-not-reached explanation are the only exceptions to Section 8's instruction to keep scores and review history internal.
+- Perform all three review passes.
+- Aim for an internal alignment score above 95/100.
+- Continue meaningful revisions when necessary, without manufacturing qualifications or artificially inflating scores.
+- Preserve technical plausibility and distinguish proposed details from verified facts.
+- Keep research notes, internal analysis, and detailed review commentary out of the final response.
 
 ## 9. REQUIRED JSON OUTPUT
 
-For an eligible JD, return this exact structure, expanding arrays to cover the supplied profile:
+For eligible positions, return exactly these top-level fields:
 
 ```json
 {
-  "company": "Hiring company from the JD",
-  "title": "Generated target resume title",
+  "company": "Hiring company",
+  "title": "JD-aligned resume title",
   "summary": "Four connected sentences with selective **keyword highlighting**.",
   "skills": [
     {
-      "Technical category": ["Individual hard skill", "Individual hard skill"]
+      "Languages": ["Python", "Go"]
     },
     {
-      "Soft Skills": ["Prioritized JD-derived skill 1", "Prioritized JD-derived skill 2", "Prioritized JD-derived skill 3", "Prioritized JD-derived skill 4", "Prioritized JD-derived skill 5"]
+      "Cloud & Infrastructure": ["AWS", "Kubernetes"]
+    },
+    {
+      "Soft Skills": [
+        "Technical Leadership",
+        "Cross-functional Collaboration",
+        "Problem Solving"
+      ]
     }
   ],
   "experience": [
     {
-      "company": "Exact supplied employer name",
-      "title": "Generated functional role title",
-      "overview": "First sentence naturally connects the **Team Name** and **Project Name** through the candidate’s contribution, clearly distinguishing the team from the project and explaining purpose and users. Second sentence summarizes main ownership and the most impactful achievement, with one meaningful metric when defensible.",
+      "company": "Exact employer name",
+      "title": "JD-aligned functional role title",
+      "overview": "First sentence identifies the **Team Name**, **Project Name**, and actual project functionality. Second sentence explains specific technical ownership and a **quantified accomplishment**.",
       "sentences": [
-        "One concise contribution with selective **keyword highlighting**.",
-        "Another distinct contribution."
+        "Technically detailed accomplishment with concrete implementation and **measurable engineering scale**.",
+        "Distinct engineering contribution with specific ownership, technologies, and **quantified impact**."
       ],
-      "technologies": ["Individual technology", "Individual technical practice"]
+      "technologies": [
+        "Python",
+        "Kubernetes",
+        "PostgreSQL"
+      ]
     }
   ],
   "education": [
     {
-      "degree": "Complete supplied education text"
+      "degree": "Complete supplied education information"
     }
   ]
 }
 ```
 
-Output rules:
-1. Follow the Final output instruction below: for eligible JDs, show plain-text iteration scores followed by one final resume JSON code block; for ineligible JDs, return only the Section 2 error JSON code block.
-2. Use exactly the top-level keys company, title, summary, skills, experience, and education.
-3. Set top-level company to the hiring company named in the JD, or an empty string if unidentified.
-4. Include exactly one experience object per supplied employer, ordered as specified in Section 1, with exactly company, title, overview, sentences, and technologies.
-5. Use arrays of individual strings for skill values and technologies; do not combine multiple entries into comma-separated strings.
-6. Preserve the education structure shown and all supplied education information.
-7. Do not add, remove, or rename schema keys. Use double quotes and correct escaping, with no trailing commas or comments.
+### JSON Rules
 
-### Final output instruction
+1. Use exactly the top-level keys `company`, `title`, `summary`, `skills`, `experience`, and `education`.
+2. Include one experience object per employer, ordered by employment end date, newest first.
+3. Every experience object must contain exactly `company`, `title`, `overview`, `sentences`, and `technologies`.
+4. Represent skills as category objects containing arrays of individual skill strings.
+5. Preserve all supplied education details.
+6. Use valid JSON with double-quoted strings and no trailing commas.
+7. Do not include extra fields, comments, contact details, or additional JSON objects.
 
-1. For an eligible JD, first show the actual completed review progress as plain text:
+### Final Response Format
 
-   Iterate 0: ATS Alignment Score — [initial score]/100
-   Iterate 1: ATS Alignment Score — [score after mandatory Pass 1]/100
-   Iterate 2: ATS Alignment Score — [score after mandatory Pass 2]/100
-   Iterate 3: ATS Alignment Score — [score after mandatory Pass 3]/100
+First display the completed iteration scores:
 
-   Add one line for each additional completed review-and-correction iteration:
+Iterate 0: ATS Alignment Score — [score]/100  
+Iterate 1: ATS Alignment Score — [score]/100  
+Iterate 2: ATS Alignment Score — [score]/100  
+Iterate 3: ATS Alignment Score — [score]/100
 
-   Iterate N: ATS Alignment Score — [reassessed score]/100
+If the final score remains at or below 95, briefly identify the unresolved limitations.
 
-   Report only completed iterations and honestly calculated scores using the fixed rubric. Do not invent improvements, inflate scores, or skip any of the three mandatory passes. Scores may remain unchanged when a review finds no necessary corrections.
+Then provide the final revised resume in a single valid JSON code block.
 
-   If the final score does not exceed 95/100, add:
+Do not output intermediate drafts, research notes, detailed explanations, or review commentary.
 
-   Target not reached: [brief explanation of remaining constraints].
+For ineligible positions, return only the applicable eligibility error JSON.
 
-   Then return the final revised resume as one valid JSON object inside a Markdown code block labeled json, preserving the exact resume schema. Do not output an earlier draft, a separate review-report JSON object, or other commentary.
-
-   For an ineligible JD, return only the error object specified in Section 2; do not include iteration lines.
+---
 
 ## JOB DESCRIPTION
 

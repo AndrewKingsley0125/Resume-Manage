@@ -1,49 +1,51 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Resume Manager Apply</title><link rel="icon" type="image/png" href="icons/icon-32.png"><link rel="stylesheet" href="panel.css"></head>
-<body>
-<header><h1>Resume Apply</h1><button id="refresh" class="secondary">Refresh</button></header>
-<button id="connection-settings" class="connection-summary secondary"><span id="connected-name">Not connected</span></button>
-<p id="panel-placement" class="hint" hidden>Chrome has placed this panel on the left. Use Chrome's side-panel controls to move it to the right.</p>
-<nav class="workflow-nav" aria-label="Application workflow">
-<button id="workflow-back" class="secondary" type="button" aria-label="Previous section" disabled>Back</button>
-<label><span class="sr-only">Current section</span><select id="workflow-step"><option value="connection">1. Connect</option><option value="job">2. Job</option><option value="resume">3. Resume</option><option value="questions">4. Questions</option><option value="finish">5. Finish</option></select></label>
-<button id="workflow-next" class="secondary" type="button" aria-label="Next section">Next</button>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Resume Manager Apply</title><link rel="icon" type="image/png" href="icons/icon-32.png"><link rel="stylesheet" href="tailwind.css"></head>
+<body class="group mx-auto max-w-[1280px] p-7 max-[750px]:p-4 max-[520px]:p-3">
+<header class="flex items-center justify-between gap-5 max-[750px]:items-start max-[520px]:flex-col max-[520px]:items-stretch max-[520px]:gap-2"><div><h1 class="m-0 text-[25px] font-bold max-[520px]:text-[20px]">Resume Apply</h1><p id="job-heading" class="job-heading mb-0 mt-1 font-semibold text-ok [overflow-wrap:anywhere]" hidden></p></div><button id="refresh" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Refresh</button></header>
+<button id="connection-settings" class="connection-summary secondary mb-0 mt-2.5 w-auto px-2.5 py-1.5 text-[12px] leading-[normal]"><span id="connected-name" class="text-ok">Not connected</span></button>
+<p id="panel-placement" class="hint my-3.5 text-[13px] text-muted" hidden>Chrome has placed this panel on the left. Use Chrome's side-panel controls to move it to the right.</p>
+<nav class="workflow-nav my-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2" aria-label="Application workflow">
+<button id="workflow-back" class="secondary m-0 w-auto p-2.5" type="button" aria-label="Previous section" disabled>Back</button>
+<label class="m-0 min-w-0"><span class="sr-only">Current section</span><select id="workflow-step" class="m-0 px-2 py-2.5 text-[13px]"><option value="connection">1. Connect</option><option value="job">2. Job</option><option value="resume">3. Resume</option><option value="questions">4. Questions</option><option value="finish">5. Finish</option></select></label>
+<button id="workflow-next" class="secondary m-0 w-auto p-2.5" type="button" aria-label="Next section">Next</button>
 </nav>
-<p id="status" role="status" aria-live="polite">Connect to Resume Manager to start.</p>
-<p id="response-monitor-status" role="status" class="hint"></p>
-<section class="card workflow-section" id="connection" data-workflow-section="connection"><h2>Connect</h2>
-<label>Extension name<input id="client-name" placeholder="Chrome - personal profile" maxlength="80"></label><label>Pairing code from the app<input id="pair-code" autocomplete="off" spellcheck="false"></label>
-<button id="pair">Connect</button><button id="forget" class="secondary">Forget connection</button>
+<p id="status" class="my-3.5 whitespace-pre-wrap rounded-[9px] bg-accent-status p-3.5 text-muted [&.error]:bg-bad-bg" role="status" aria-live="polite">Connect to Resume Manager to start.</p>
+<p id="response-monitor-status" role="status" class="hint my-3.5 text-[13px] text-muted empty:hidden"></p>
+
+<section class="card workflow-section mb-5 mt-3 rounded-[14px] border border-line bg-card p-6 max-[750px]:p-4 max-[520px]:mb-3.5 max-[520px]:p-3.5" id="connection" data-workflow-section="connection"><h2 class="mb-4 mt-0 text-[18px] font-bold">Connect</h2>
+<label class="mb-2">Extension name<input id="client-name" placeholder="Chrome - personal profile" maxlength="80"></label><label class="mb-2">Pairing code from the app<input id="pair-code" autocomplete="off" spellcheck="false"></label>
+<button id="pair" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Connect</button><button id="forget" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Forget connection</button>
 </section>
-<section class="card workflow-section" data-workflow-section="job" hidden><h2>Assigned job</h2>
-<label>Jobs from Resume Manager<select id="jobs"><option value="">Choose a job</option></select></label><p id="job-summary"></p>
-<div class="actions"><button data-step="open">Check pages / grant site access</button><button id="adopt" class="secondary">Use application tab</button></div>
-<details><summary>About job tabs</summary><p class="hint">Jobs open beside ChatGPT automatically. For another application tab, click the extension icon from that tab and choose Use application tab here.</p></details>
+<section class="card workflow-section mb-5 mt-3 rounded-[14px] border border-line bg-card p-6 max-[750px]:p-4 max-[520px]:mb-3.5 max-[520px]:p-3.5" data-workflow-section="job" hidden><h2 class="mb-4 mt-0 text-[18px] font-bold">Assigned job</h2>
+<label class="job-picker mb-2 group-[.locked]:hidden">Jobs from Resume Manager<select id="jobs"><option value="">Choose a job</option></select></label><p id="job-summary" class="my-3.5 text-muted"></p>
+<div class="actions my-[18px] flex flex-wrap gap-3 max-[520px]:flex-col"><button data-step="open" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Check pages / grant site access</button><button id="adopt" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Use application tab</button></div>
+<details><summary>About job tabs</summary><p class="hint my-3.5 text-[13px] text-muted" id="job-tabs-hint">Each job opens in its own window: the job site and its own ChatGPT conversation side by side, with this job's Resume Apply window docked on the right. Each Resume Apply window works only on its own job. If a job site opened the application in another tab, click the extension icon from that tab, choose the job, and click Use application tab.</p></details>
 </section>
-<section class="card workflow-section" data-workflow-section="resume" hidden><h2>Resume</h2>
-<details id="jd-details" open><summary>Job description and prompt</summary>
-<button data-step="extract">Detect JD</button>
-<div class="columns"><label>Hiring company<input id="company"></label><label>Job title<input id="job-title"></label></div>
-<label>Review job description<textarea id="jd" rows="7"></textarea></label>
-<button data-step="sendResume">Send to ChatGPT</button></details>
-<section id="resume-response-review" hidden><h3>Review collected resume</h3><p id="resume-response-target"></p>
-<label>Resume JSON<textarea id="resume-response-preview" rows="10" readonly></textarea></label>
-<label class="check"><input type="checkbox" id="approve-resume-response"> This is the correct resume for this job.</label>
-<button id="confirm-resume-response">Export resume files</button></section>
-<details id="saved-files-details"><summary>Saved files</summary><pre id="files"></pre></details>
-<p class="hint">The completed response appears automatically. Export it, then continue to Questions to upload resume.docx.</p>
+<section class="card workflow-section mb-5 mt-3 rounded-[14px] border border-line bg-card p-6 max-[750px]:p-4 max-[520px]:mb-3.5 max-[520px]:p-3.5" data-workflow-section="resume" hidden><h2 class="mb-4 mt-0 text-[18px] font-bold">Resume</h2>
+<details id="jd-details" open><summary class="mb-3 font-semibold">Job description and prompt</summary>
+<button data-step="extract" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Detect JD</button>
+<div class="columns grid grid-cols-2 gap-[18px] max-[750px]:grid-cols-1 max-[520px]:gap-1.5"><label class="mb-2">Hiring company<input id="company"></label><label class="mb-2">Job title<input id="job-title"></label></div>
+<label class="mb-2">Review job description<textarea id="jd" rows="7"></textarea></label>
+<button data-step="sendResume" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Send to ChatGPT</button></details>
+<section id="resume-response-review" hidden><h3 class="my-[1em] text-[1.17em] font-bold">Review collected resume</h3><p id="resume-response-target" class="my-3.5 text-muted"></p>
+<label class="mb-2">Resume JSON<textarea id="resume-response-preview" rows="10" readonly></textarea></label>
+<label class="check mb-2 flex items-center gap-2.5"><input type="checkbox" id="approve-resume-response"> This is the correct resume for this job.</label>
+<button id="confirm-resume-response" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Export resume files</button></section>
+<details id="saved-files-details" class="mt-4"><summary>Saved files</summary><pre id="files" class="my-3.5 whitespace-pre-wrap text-[#b8cbff] [overflow-wrap:anywhere]"></pre></details>
+<p class="hint my-3.5 text-[13px] text-muted">The completed response appears automatically. Export it, then continue to Questions to upload resume.docx.</p>
 </section>
-<section class="card workflow-section" data-workflow-section="questions" hidden><h2>Application questions</h2>
-<div class="actions"><button data-step="auto">Auto-fill application</button><button data-step="scan" class="secondary">Scan questions</button><button data-step="sendAnswers">Ask ChatGPT</button></div>
-<details><summary>Saved application facts</summary><pre id="local-facts"></pre></details>
-<div id="questions"><p>Scan the current application page to start.</p></div>
-<div id="answer-review-actions" hidden><p class="hint">Edit any answer here. Blank answers are skipped. Clicking Fill form puts these answers on the job site, but nothing is submitted.</p><button data-step="fill">Fill form</button></div>
+<section class="card workflow-section mb-5 mt-3 rounded-[14px] border border-line bg-card p-6 max-[750px]:p-4 max-[520px]:mb-3.5 max-[520px]:p-3.5" data-workflow-section="questions" hidden><h2 class="mb-4 mt-0 text-[18px] font-bold">Application questions</h2>
+<div class="actions my-[18px] flex flex-wrap gap-3 max-[520px]:flex-col"><button data-step="auto" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Auto-fill application</button><button data-step="scan" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Scan questions</button><button data-step="sendAnswers" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Ask ChatGPT</button></div>
+<details><summary>Saved application facts</summary><pre id="local-facts" class="my-3.5 whitespace-pre-wrap text-[#b8cbff] [overflow-wrap:anywhere]"></pre></details>
+<div id="site-memory" hidden><p id="site-memory-text" class="hint my-3.5 text-[13px] text-muted"></p><div class="actions my-[18px] flex flex-wrap gap-3 max-[520px]:flex-col"><button data-step="saveAnswers" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Save answers for this site</button><button id="clear-site-answers" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Clear saved answers</button></div></div>
+<div id="questions"><p class="my-3.5 text-muted">Scan the current application page to start.</p></div>
+<div id="answer-review-actions" hidden><p class="hint mb-2 mt-3 text-[13px] text-muted">Edit any answer here. Blank answers are skipped. Clicking Fill form puts these answers on the job site, but nothing is submitted.</p><button data-step="fill" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Fill form</button></div>
 </section>
-<section class="card workflow-section" data-workflow-section="finish" hidden><h2>Finish</h2><p>Submit or end the application on the job site yourself.</p><button id="complete">Confirm application ended</button></section>
-<details id="response-tools" class="recovery-tools" hidden><summary>Response recovery</summary>
-<button data-step="readResume" data-recovery-for="resume" class="secondary">Read resume manually</button>
-<button data-step="readAnswers" data-recovery-for="questions" class="secondary">Read answers manually</button>
-<label>Paste response<textarea id="response" rows="5" placeholder="Paste the completed JSON"></textarea></label>
-<button id="paste-resume" data-recovery-for="resume" class="secondary">Export pasted resume</button><button id="paste-answers" data-recovery-for="questions" class="secondary">Preview pasted answers</button>
+<section class="card workflow-section mb-5 mt-3 rounded-[14px] border border-line bg-card p-6 max-[750px]:p-4 max-[520px]:mb-3.5 max-[520px]:p-3.5" data-workflow-section="finish" hidden><h2 class="mb-4 mt-0 text-[18px] font-bold">Finish</h2><p class="my-3.5 text-muted">Submit or end the application on the job site yourself.</p><button id="complete" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Confirm application ended</button></section>
+<details id="response-tools" class="recovery-tools my-4 rounded-lg border border-dashed border-line p-3 [&[open]>summary]:mb-3" hidden><summary class="text-[13px] text-muted">Response recovery</summary>
+<button data-step="readResume" data-recovery-for="resume" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Read resume manually</button>
+<button data-step="readAnswers" data-recovery-for="questions" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Read answers manually</button>
+<label class="mb-2">Paste response<textarea id="response" rows="5" placeholder="Paste the completed JSON"></textarea></label>
+<button id="paste-resume" data-recovery-for="resume" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Export pasted resume</button><button id="paste-answers" data-recovery-for="questions" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Preview pasted answers</button>
 </details>
 <script type="module" src="panel.js"></script></body></html>

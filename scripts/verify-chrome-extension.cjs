@@ -65,7 +65,7 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
       if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result.value;
     };
     await delay(500);
-    const paired=await evaluate(`chrome.runtime.sendMessage({action:'pair',code:${JSON.stringify(bridge.dashboard().pairingCode)},name:'Chrome smoke test'})`);
+    const paired=await evaluate(`chrome.runtime.sendMessage({action:'pair',code:${JSON.stringify(bridge.dashboard(profile.id).pairingCode)},name:'Chrome smoke test'})`);
     assert.equal(paired.ok,true,JSON.stringify(paired));
     const connection=bridge.dashboard().connections[0];assert.ok(connection.connected);
     console.log('PASS: real Chrome service worker paired with the authenticated localhost bridge.');
@@ -91,7 +91,7 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     }
     assert.ok(automatic && automatic.autoOpened,JSON.stringify(automatic));
     assert.equal(automatic.layout,'split',JSON.stringify(automatic));
-    console.log('PASS: assignment automatically opens the job and ChatGPT in native split view.');
+    console.log('PASS: assignment automatically opens the job in its own window.');
     const detail=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
     assert.equal(detail.job.profile.firstName,'Fixture');
     onEvent = message => {
@@ -112,6 +112,45 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     const live=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
     assert.equal(live.run.ready,true);assert.ok(live.run.groupId>=0);assert.equal(live.run.layout,'split');
     const tabs=await evaluate(`chrome.tabs.query({groupId:${live.run.groupId}})`);assert.equal(tabs.length,2);
+    // The job site and ChatGPT share the split view; the job's own Resume Apply window, a tabless
+    // popup locked to this job, opened by itself to the right of the job window.
+    const site=tabs.find(tab=>tab.id===live.run.jobTabId),gpt=tabs.find(tab=>tab.id===live.run.chatTabId);
+    assert.ok(site.splitViewId>=0 && site.splitViewId===gpt.splitViewId,JSON.stringify(tabs.map(t=>[t.url,t.splitViewId])));
+    // No Resume Apply window opens with the job: the app runs it. Show details opens it on request.
+    assert.equal(live.run.panelWindowId ?? null,null);
+    assert.equal((await evaluate(`chrome.windows.getAll({windowTypes:['popup']})`)).length,0);
+    console.log('PASS: each job window shows the job site and ChatGPT side by side, with no extra window.');
+    bridge.command(profile.id,job.id,'details');
+    let detailsRun;
+    for(let i=0;i<100;i++){detailsRun=(await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run;if(detailsRun.panelWindowId)break;await delay(100);}
+    const panelWindow=await evaluate(`chrome.windows.get(${detailsRun.panelWindowId},{populate:true})`);
+    assert.equal(panelWindow.type,'popup');
+    assert.ok(panelWindow.tabs[0].url.endsWith('/panel.html?job='+encodeURIComponent(job.id)),panelWindow.tabs[0].url);
+    assert.equal(bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).lastCommand,null,'showing details leaves no result line');
+    await evaluate(`chrome.windows.remove(${detailsRun.panelWindowId})`);
+    for(let i=0;i<50 && (await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run.panelWindowId;i++)await delay(100);
+    console.log("PASS: Show details opens the job's Resume Apply window on request, and closing it is noticed.");
+    // A step started from the app runs in the job's browser and its outcome comes back.
+    bridge.command(profile.id,job.id,'open');
+    let lastCommand;
+    for(let i=0;i<100 && !(lastCommand=bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).lastCommand);i++)await delay(100);
+    assert.ok(lastCommand && lastCommand.action==='open' && lastCommand.ok,JSON.stringify(lastCommand));
+    assert.deepEqual(bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).commands,[]);
+    console.log("PASS: a step started from the app runs in the job's browser and reports back.");
+    // The job page's title reaches the app, so the job card can name the job before its JD is read.
+    let page;
+    for(let i=0;i<100 && !(page=bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).page)?.title;i++)await delay(100);
+    assert.ok(page && page.title,JSON.stringify(page));
+    console.log("PASS: the job page's title reaches the app for its job card.");
+    // Clicking the job's card in the app asks its browser to bring the job window forward. Headless
+    // Chrome never moves window focus, so only the step running cleanly can be checked here.
+    bridge.command(profile.id,job.id,'focus');
+    for(let i=0;i<100 && bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).commands.length;i++)await delay(100);
+    const shown=bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id);
+    assert.deepEqual(shown.commands,[]);
+    assert.equal(shown.lastCommand.action,'open','showing the window succeeded and leaves no result line');
+    assert.equal((await evaluate(`chrome.tabs.get(${live.run.jobTabId})`)).active,true);
+    console.log("PASS: clicking a job's card in the app runs the show-window step in its browser.");
     const extracted=await evaluate(`chrome.runtime.sendMessage({action:'extract',id:${JSON.stringify(job.id)}})`);assert.equal(extracted.job.company,'Acme');
     const sent=await evaluate(`chrome.runtime.sendMessage({action:'sendResume',id:${JSON.stringify(job.id)},job:${JSON.stringify(extracted.job)}})`);assert.equal(sent.ok,true,JSON.stringify(sent));assert.match(sent.message,/Resume prompt sent/);
     // If the long request is omitted entirely, require human confirmation instead of blocking export.
@@ -144,15 +183,18 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     console.log('PASS: generated DOCX is uploaded only to the resume field and the form is rescanned automatically.');
     const beforeAsk=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
     const countryBefore=beforeAsk.run.fields.find(field=>field.label==='Country');assert.deepEqual(countryBefore.options,[]);
-    const asked=await evaluate(`chrome.runtime.sendMessage({action:'sendAnswers',id:${JSON.stringify(job.id)}})`);assert.equal(asked.ok,true,JSON.stringify(asked));assert.match(asked.message,/Sent 3 application questions/);
+    // Contact facts come straight from the profile and are never asked.
+    const firstBefore=beforeAsk.run.fields.find(field=>field.label==='First name');
+    assert.equal(beforeAsk.run.answers.find(answer=>answer.id===firstBefore.id).answer,'Fixture');assert.ok(beforeAsk.run.fixedIds.includes(firstBefore.id));
+    const asked=await evaluate(`chrome.runtime.sendMessage({action:'sendAnswers',id:${JSON.stringify(job.id)}})`);assert.equal(asked.ok,true,JSON.stringify(asked));assert.match(asked.message,/Sent 2 application questions/);
     // Simulate a missed content-script notification. The panel's polling action
     // must still collect the complete response after generation stops.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.chatTabId}},func:()=>ResumeApplyChat.stopResponseWatch()})`);
     const questionPrompt=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.chatTabId}},func:()=>[...document.querySelectorAll('[data-message-author-role="user"]')].at(-1).textContent})`);
-    assert.ok(questionPrompt[0].result.includes('First name'));
     assert.ok(questionPrompt[0].result.includes('Why our company?'));
     const promptSource=questionPrompt[0].result;
     const promptPayload=JSON.parse(promptSource.slice(promptSource.lastIndexOf('{',promptSource.indexOf('"personalInfo"')),promptSource.lastIndexOf('}',promptSource.indexOf('Request reference:'))+1));
+    assert.ok(!promptPayload.questions.some(question=>question.label==='First name'));
     const sentCountry=promptPayload.questions.find(question=>question.label==='Country');
     assert.equal(sentCountry.options,undefined);assert.equal(sentCountry.answerFormat,'text');
     const unopened=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>!document.querySelector('#country-options')})`);assert.equal(unopened[0].result,true);
@@ -173,11 +215,25 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     console.log('PASS: grid dropdowns are sent to GPT as text questions without opening or enumerating their choices.');
     const unfilled=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>document.querySelector('#first').value})`);assert.equal(unfilled[0].result,'');
     console.log('PASS: polling collects completed answers after a missed page notification, including the Copy response fallback; application fields remain untouched.');
-    const answers=reviewed.run.answers.filter(a=>a.answer!==null && reviewed.run.fields.find(f=>f.id===a.id).type!=='file');
-    const filled=await evaluate(`chrome.runtime.sendMessage({action:'fill',id:${JSON.stringify(job.id)},approved:true,answers:${JSON.stringify(answers)}})`);assert.equal(filled.ok,true,JSON.stringify(filled));assert.ok(filled.results.every(r=>r.filled));
+    // The app is told the answers are ready, and its Fill form puts them on the page.
+    let ready;
+    for(let i=0;i<100 && (ready=bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).progress)?.key!=='answers-ready';i++)await delay(100);
+    assert.equal(ready.key,'answers-ready',JSON.stringify(ready));
+    bridge.command(profile.id,job.id,'fill');
+    let fillResult;
+    for(let i=0;i<200 && (fillResult=bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).lastCommand)?.action!=='fill';i++)await delay(100);
+    assert.ok(fillResult && fillResult.action==='fill' && fillResult.ok,JSON.stringify(fillResult));
+    console.log("PASS: when ChatGPT's answers are ready, the app's Fill form puts them on the page.");
     const application=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},world:'MAIN',func:()=>({submitted:globalThis.submitted,first:document.querySelector('#first').value,why:document.querySelector('#why').value,country:document.querySelector('#country').value})})`);
     assert.equal(application[0].result.submitted,false);assert.equal(application[0].result.first,'Fixture');assert.ok(application[0].result.why.includes('reliable services'));
     assert.equal(application[0].result.country,'United States of America');
+    // Saved for this profile and site in the wording the site showed, not ChatGPT's.
+    const memory=await evaluate(`chrome.storage.local.get('siteAnswers').then(data=>data.siteAnswers)`);
+    const book=Object.values(memory[profile.id])[0];
+    assert.ok(Object.values(book.answers).some(entry=>entry.label==='Country' && entry.answer==='United States of America'),JSON.stringify(book));
+    assert.ok(!Object.values(book.answers).some(entry=>entry.label==='First name'),'contact details stay in the profile');
+    const memoryDetail=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
+    assert.ok(memoryDetail.siteMemory[0].count>=1,JSON.stringify(memoryDetail.siteMemory));
     console.log('PASS: real worker opens and groups both tabs, extracts JD, sends/reads ChatGPT fixtures, exports, scans, and fills approved answers.');
     // One click: a question appears, Auto-fill asks only about it, fills, and stops short of Submit.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const box=document.createElement('input');box.id='extra';box.setAttribute('aria-label','Newly revealed question');document.querySelector('#first').form.append(box);}})`);
@@ -193,6 +249,9 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     const afterAuto=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},world:'MAIN',func:()=>({submitted:globalThis.submitted,extra:document.querySelector('#extra').value,first:document.querySelector('#first').value})})`);
     assert.equal(afterAuto[0].result.submitted,false);assert.ok(afterAuto[0].result.extra.length>0);assert.equal(afterAuto[0].result.first,'Fixture');
     const uploads=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>document.querySelector('#resume').files.length})`);assert.equal(uploads[0].result,1);
+    // The job reports how Auto-fill went, and the app keeps it for its status view.
+    for(let i=0;i<30 && !bridge.dashboard().jobs.find(j=>j.id===job.id)?.progress?.text;i++)await delay(100);
+    assert.ok(bridge.dashboard().jobs.find(j=>j.id===job.id)?.progress?.text,JSON.stringify(bridge.dashboard().jobs));
     console.log('PASS: Auto-fill asks ChatGPT only about the new question, fills the form, and never submits.');
     // A multi-page form: Auto-fill clicks Next, then answers the next page by itself.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const form=document.querySelector('#first').form;form.querySelectorAll('button,input[type=submit]').forEach(control=>control.remove());const next=document.createElement('button');next.type='button';next.id='next-page';next.textContent='Next';next.onclick=()=>{next.remove();const box=document.createElement('input');box.id='second';box.setAttribute('aria-label','Second page question');form.append(box);};form.append(next);}})`);
@@ -209,6 +268,10 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     console.log('PASS: Auto-fill clicks Next on a completed page, answers the next page, and never submits.');
     const completed=await evaluate(`chrome.runtime.sendMessage({action:'complete',id:${JSON.stringify(job.id)},confirmed:true})`);
     assert.equal(completed.ok,true);assert.equal(bridge.dashboard().jobs[0].status,'completed');
+    // Marking it ended closes the job's tabs.
+    let left=[];
+    for(let i=0;i<30;i++){left=await evaluate(`chrome.tabs.query({}).then(tabs=>tabs.filter(t=>[${live.run.jobTabId},${live.run.chatTabId}].includes(t.id)).length)`);if(!left)break;await delay(100);}
+    assert.equal(left,0,'the job tab and ChatGPT tab are closed');
     console.log('PASS: app job delivery, profile detail retrieval, and manual completion through the real extension worker.');
   } finally {
     if(socket && socket.readyState===WebSocket.OPEN){try{await send('Browser.close');}catch(_){}socket.close();}

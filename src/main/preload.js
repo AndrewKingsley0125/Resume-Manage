@@ -1,10 +1,29 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  extensionState: () => ipcRenderer.invoke('extension:state'),
-  extensionRotateCode: () => ipcRenderer.invoke('extension:rotateCode'),
+  extensionState: profileId => ipcRenderer.invoke('extension:state', profileId),
+  extensionRotateCode: profileId => ipcRenderer.invoke('extension:rotateCode', profileId),
   extensionUnlink: id => ipcRenderer.invoke('extension:unlink', id),
   extensionAssign: args => ipcRenderer.invoke('extension:assign', args),
+  extensionCommand: args => ipcRenderer.invoke('extension:command', args),
+
+  discoveryStatus: () => ipcRenderer.invoke('discovery:status'),
+  discoveryDiscover: args => ipcRenderer.invoke('discovery:discover', args),
+  discoverySync: () => ipcRenderer.invoke('discovery:sync'),
+  discoveryStop: () => ipcRenderer.invoke('discovery:stop'),
+  discoveryAddBoard: url => ipcRenderer.invoke('discovery:addBoard', url),
+  discoverySearchProfile: profileId => ipcRenderer.invoke('discovery:searchProfile', profileId),
+  discoverySaveSearchProfile: (profileId, search) => ipcRenderer.invoke('discovery:saveSearchProfile', profileId, search),
+  discoveryMatches: (profileId, options) => ipcRenderer.invoke('discovery:matches', profileId, options),
+  discoveryJob: id => ipcRenderer.invoke('discovery:job', id),
+  discoveryVerify: id => ipcRenderer.invoke('discovery:verify', id),
+  discoveryMark: (profileId, id, status) => ipcRenderer.invoke('discovery:mark', profileId, id, status),
+  discoveryOpen: url => ipcRenderer.invoke('discovery:open', url),
+  onDiscoveryEvent: callback => {
+    const listener = (_event, message) => callback(message);
+    ipcRenderer.on('discovery:event', listener);
+    return () => ipcRenderer.removeListener('discovery:event', listener);
+  },
   generatePrompt: (profileId) => ipcRenderer.invoke('prompt:generate', profileId),
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfiles: (profiles) => ipcRenderer.invoke('profiles:save', profiles),

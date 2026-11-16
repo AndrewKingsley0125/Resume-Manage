@@ -17,9 +17,12 @@ test('schema rejects missing and extra keys and invalid nested types', () => {
     d => {delete d.summary;}, d => {d.extra = true;}, d => {d.experience[0].overview = 42;},
     d => {delete d.experience[0].technologies;}, d => {d.experience[0].technologies = ['JS',12];},
     d => {d.skills = [{Languages:['JS'],Other:['SQL']}];}, d => {d.education = [{degree:3}];},
-    d => {d.experience[0].company = 'Wrong employer';}, d => {d.experience.push({...d.experience[0]});},
+    d => {d.experience[0].company = '  ';}, d => {d.experience.push({...d.experience[0]});}, d => {d.experience = [];},
   ];
   for(const mutate of cases) {const data=valid();mutate(data);assert.throws(()=>Resume.validate(data,profile));}
+  // An employer worded differently in the JSON is accepted.
+  const renamed=valid();renamed.experience[0].company='Example Employer Inc.';
+  assert.doesNotThrow(()=>Resume.validate(renamed,profile));
   assert.throws(()=>Resume.parse('```json\n{"error":"Required onsite work"}\n```'),/Required onsite/);
 });
 test('legacy migration fills new fields without changing profile facts', () => {
@@ -37,8 +40,32 @@ test('seed schema matches the selected profile', () => {
 });
 test('full prompt preserves revised instructions and injects profile only', () => {
   const prompt=buildPrompt(profile,new Date(2026,9,28));
-  for(const required of ['## 1. TASK, INPUTS, AND PRIORITIES','Given the candidate profile and complete job description (JD)','## 9. REQUIRED JSON OUTPUT','## 8. MANDATORY INTERNAL REVIEW AND ALIGNMENT LOOP','- Example $& Employer, Chicago, Contract, Remote, 2020 - 2026','Example University 2013 - 2017']) assert.ok(prompt.includes(required),required);
-  for(const forbidden of ['{{CANDIDATE_PROFILE}}','DoorDash','Instagram','JPMorgan Chase','New York University']) assert.ok(!prompt.includes(forbidden),forbidden);
+  for(const required of ['## 1. TASK AND CANDIDATE PROFILE','based on the candidate profile and complete job description (JD)','## 9. REQUIRED JSON OUTPUT','## 8. MANDATORY THREE-PASS REVIEW','**Professional Experience**','- Example $& Employer — Chicago, Contract, Remote, 2020 - 2026','- BS Computer Science, Example University, 2013 - 2017','[PASTE THE JOB DESCRIPTION HERE]']) assert.ok(prompt.includes(required),required);
+  // No sample candidate's facts leak into another profile's prompt.
+  for(const forbidden of ['{{CANDIDATE_PROFILE}}','Tony Zhao','Snowflake','TruEra','Ejenta','Berkeley']) assert.ok(!prompt.includes(forbidden),forbidden);
+});
+test('with the switch on, the resume shows the employer names written in the JSON, keeping each job\'s profile dates', () => {
+  const p={useJsonEmployerNames:true,workHistory:[
+    {company:'Snowflake',period:'May 2024 - Oct 2026',location:'Menlo Park, CA'},
+    {company:'TruEra',period:'Feb 2022 - May 2024'},
+    {company:'Amazon',period:'May 2019 - Aug 2020'}]};
+  // Reworded names, and the JSON lists the roles in a different order.
+  const roles=Resume.experience(p,{experience:[
+    {company:'Amazon Web Services',title:'SDE',sentences:['A.']},
+    {company:'Snowflake Inc.',title:'Senior SWE',sentences:['S.']},
+    {company:'TruEra',title:'Senior ML Infra',sentences:['T.']}]});
+  assert.deepEqual(roles.map(r=>r.company),['Snowflake Inc.','TruEra','Amazon Web Services']);
+  assert.deepEqual(roles.map(r=>r.title),['Senior SWE','Senior ML Infra','SDE']);
+  assert.equal(roles[0].period,'May 2024 - Oct 2026');assert.equal(roles[0].location,'Menlo Park, CA');
+  // A name with nothing in common falls back to the same position; a blank name keeps the profile's.
+  const byPosition=Resume.experience(p,{experience:[{company:'Data Cloud Co',title:'A'},{company:'',title:'B'},{company:'AWS',title:'C'}]});
+  assert.deepEqual(byPosition.map(r=>r.company),['Data Cloud Co','TruEra','AWS']);
+  assert.deepEqual(byPosition.map(r=>r.title),['A','B','C']);
+  // Switch off (the default): the profile's names, with each JSON role still matched to its job.
+  const off=Resume.experience({...p,useJsonEmployerNames:false},{experience:[{company:'Amazon Web Services',title:'SDE'},{company:'Snowflake Inc.',title:'Senior SWE'},{company:'TruEra',title:'Senior ML Infra'}]});
+  assert.deepEqual(off.map(r=>r.company),['Snowflake','TruEra','Amazon']);
+  assert.deepEqual(off.map(r=>r.title),['Senior SWE','Senior ML Infra','SDE']);
+  assert.deepEqual(Resume.experience({workHistory:p.workHistory},{experience:[{company:'Snowflake Inc.'},{company:'TruEra'},{company:'Amazon'}]}).map(r=>r.company),['Snowflake','TruEra','Amazon']);
 });
 test('repeated employers match distinct roles without reusing content', () => {
   const p={workHistory:[{company:'Same',period:'2024 - 2026'},{company:'Same',period:'2020 - 2022'}]};
@@ -53,8 +80,8 @@ test('Markdown outside candidate details remains unchanged, including line endin
   const [before,after]=template.split('{{CANDIDATE_PROFILE}}');
   assert.ok(prompt.startsWith(before));
   assert.ok(prompt.endsWith(after));
-  assert.ok(prompt.includes('Name: Jane Smith'));
-  assert.ok(prompt.includes('Location: Austin'));
+  assert.ok(prompt.includes('**Name:** Jane Smith'));
+  assert.ok(prompt.includes('**Location:** Austin'));
   assert.ok(prompt.includes('Example $& Employer'));
   assert.ok(!prompt.includes('{{CANDIDATE_PROFILE}}'));
   const crlf=template.replace(/\r?\n/g,'\r\n');

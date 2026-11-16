@@ -1,6 +1,6 @@
 import {captureCodeCopy} from './code-copy.mjs';
-import {arrangeWorkspace} from './layout.mjs';
-import {APP_URL, answersPrompt, parseAnswers, decodeReply, rememberAnswers, recallAnswers, optionAnswer, answerableQuestions, mergeGeneratedAnswers, resumeResponse} from './core.mjs';
+import {arrangeWorkspace, panelBounds} from './layout.mjs';
+import {APP_URL, answersPrompt, parseAnswers, decodeReply, rememberAnswers, recallAnswers, currentAnswers, carryPageState, optionAnswer, answerableQuestions, mergeGeneratedAnswers, resumeResponse, profileAnswers, profileBasis, learnSiteAnswers, recallSiteAnswers, siteAnswerCount, runProgress, jdSources, parseJdSource} from './core.mjs';
 const locks = new Set();
 let watching = false;
 let runWrites = Promise.resolve();
@@ -19,8 +19,53 @@ async function saveRun(id, patch) {
     for(const key of ['resumeReceipt','answerReceipt'])if(run[key])anchor[key]=Object.fromEntries(['marker','userMessageId','conversationPath','sentAt','responseBaseline'].filter(k=>run[key][k]!==undefined).map(k=>[k,run[key][k]]));
     if(run.responseMonitor?.status==='waiting')anchor.responseMonitor=run.responseMonitor;
     runAnchors[id]=anchor;await chrome.storage.local.set({runAnchors});return run;});
-  runWrites = saved.catch(() => {});return saved;
+  runWrites = saved.catch(() => {});
+  saved.then(run => reportProgress(id, run)).catch(() => {});
+  return saved;
 }
+// Tells the app what this job is doing now ("Waiting for ChatGPT", "Needs you: ..."), so the
+// app can show every job's progress in one place. Sent only when it changes.
+const reported = new Map(), reportTimers = new Map();
+function reportProgress(id, run) {
+  clearTimeout(reportTimers.get(id));
+  reportTimers.set(id, setTimeout(async () => {
+    reportTimers.delete(id);
+    const body = {...runProgress(run), ...(await pageInfo(run))};
+    // The resume ChatGPT wrote, so it can be reviewed and confirmed in the app.
+    if (body.key === 'confirm-resume' && typeof run.pendingResumeResponse === 'string') body.pendingResume = run.pendingResumeResponse.slice(0, 200000);
+    const key = JSON.stringify(body);
+    if (reported.get(id) === key) return;
+    request(jobPath(id) + '/progress', body).then(() => reported.set(id, key)).catch(() => {});
+  }, 300));
+}
+// The job page's title and icon, so the app can show which job it is before its JD is read.
+// The icon is sent as a small inline image: the app does not load anything from job sites.
+const pageIcons = new Map();
+async function pageInfo(run) {
+  try {
+    const tab = await chrome.tabs.get(run.jobTabId);
+    const info = {};
+    if (tab.status === 'complete' && tab.title && !/^https?:\/\//.test(tab.title)) info.pageTitle = tab.title;
+    if (tab.favIconUrl && /^https?:/.test(tab.favIconUrl)) {
+      if (!pageIcons.has(tab.favIconUrl)) pageIcons.set(tab.favIconUrl, await inlineIcon(tab.favIconUrl).catch(() => ''));
+      if (pageIcons.get(tab.favIconUrl)) info.icon = pageIcons.get(tab.favIconUrl);
+    }
+    return info;
+  } catch (_) {return {};}
+}
+async function inlineIcon(url) {
+  const res = await fetch(url, {signal:AbortSignal.timeout(5000)});
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (!/^image\/(png|x-icon|vnd\.microsoft\.icon|svg\+xml|jpeg|gif|webp)$/.test(type) || bytes.length > 40000) return '';
+  let binary = '';for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return `data:${type};base64,${btoa(binary)}`;
+}
+// When a job page finishes loading or changes its title or icon, tell the app.
+chrome.tabs.onUpdated.addListener(async (tabId, change) => {
+  if (!change.title && !change.favIconUrl && change.status !== 'complete') return;
+  for (const [id, run] of Object.entries(await runs())) if (run.jobTabId === tabId) reportProgress(id, run);
+});
 async function recoverRun(id) {
   const {runAnchors={}}=await chrome.storage.local.get('runAnchors');
   if(runAnchors[id]?.chatTabId) {
@@ -39,7 +84,68 @@ async function recoverRun(id) {
 }
 async function getRun(id) {const run=(await runs())[id] || await recoverRun(id);if(!run)throw new Error('Open the assigned job and its ChatGPT conversation first.');return run;}
 const jobPath = id => '/v1/jobs/' + encodeURIComponent(id);
+// Saved answers for each profile and site, kept across jobs. Writes are queued
+// so a fill and a submit report arriving together cannot drop each other.
+let siteWrites = Promise.resolve();
+async function siteBooks() {return (await chrome.storage.local.get('siteAnswers')).siteAnswers || {};}
+function rememberSite(job,fields,values) {
+  const write=siteWrites.then(async()=>{
+    if(!job?.profileId)return 0;
+    const all=await siteBooks(),books={...all[job.profileId]},basis=profileBasis(job.profile);
+    let saved=0;
+    for(const site of new Set(fields.map(field=>field.site).filter(Boolean))) {
+      const result=learnSiteAnswers(books[site],fields.filter(field=>field.site===site),values,{jobId:job.id,company:job.company,basis});
+      books[site]=result.book;saved+=result.saved;
+    }
+    all[job.profileId]=books;
+    await chrome.storage.local.set({siteAnswers:all});
+    return saved;
+  });
+  siteWrites=write.catch(()=>{});
+  return write;
+}
+// Answers that need no ChatGPT: saved site answers in the site's wording, then
+// profile facts. Contact fields are "fixed": they come from the profile or stay blank.
+async function knownAnswers(job,fields) {
+  const books=(await siteBooks())[job.profileId] || {},basis=profileBasis(job.profile),site=new Map();
+  let restored=fields;
+  for(const name of new Set(fields.map(field=>field.site).filter(Boolean))) {
+    const result=recallSiteAnswers(restored.filter(field=>field.site===name),books[name],basis);
+    const byId=new Map(result.fields.map(field=>[field.id,field]));
+    restored=restored.map(field=>byId.get(field.id) || field);
+    for(const item of result.answers)site.set(item.id,item.answer);
+  }
+  const profile=profileAnswers(restored,job.profile);
+  return {fields:restored,site,profile:new Map(profile.answers.map(item=>[item.id,item.answer])),fixed:new Set(profile.fixed)};
+}
+// Reads what the form shows now, including the user's own corrections, and saves it.
+async function harvestAnswers(id,run) {
+  const fields=run.fields || [];
+  if(!fields.length || !run.jobTabId)return null;
+  const values=[];
+  for(const frameId of new Set(fields.map(field=>field.frameId))) {
+    const result=await page(run.jobTabId,'values',[],frameId).catch(()=>null);
+    if(!result || result.scanId!==fields.find(field=>field.frameId===frameId)?.scanId)continue;
+    for(const item of result.values)values.push({id:`${frameId}:${item.id}`,value:item.value});
+  }
+  if(!values.length)return null;
+  return rememberSite(await request(jobPath(id)),fields,values);
+}
+// The page reports its final values when the user clicks Submit.
+async function rememberSubmitted(message,sender) {
+  const tabId=sender.tab?.id,frameId=sender.frameId || 0;
+  const [id,run]=Object.entries(await runs()).find(([,item])=>item.jobTabId===tabId) || [];
+  const fields=run?.fields || [];
+  if(!id || !Array.isArray(message.values) || fields.find(field=>field.frameId===frameId)?.scanId!==message.scanId)return;
+  await rememberSite(await request(jobPath(id)),fields,message.values.map(item=>({id:`${frameId}:${item.id}`,value:item.value})));
+}
+async function siteMemory(job,run) {
+  const books=(await siteBooks())[job.profileId] || {},basis=profileBasis(job.profile);
+  return [...new Set((run.fields || []).map(field=>field.site).filter(Boolean))].map(site=>({site,count:siteAnswerCount(books[site],basis)}));
+}
 async function page(tabId, method, args = [], frameId = 0) {
+  // Lets a fill read React's own value for a field (see page-main.js).
+  if(method==='fill')await chrome.scripting.executeScript({target:{tabId,frameIds:[frameId]},world:'MAIN',files:['page-main.js']}).catch(()=>{});
   await chrome.scripting.executeScript({target:{tabId,frameIds:[frameId]},files:['page-tools.js']});
   const result = await chrome.scripting.executeScript({target:{tabId,frameIds:[frameId]},func:async (name,values) => {try{return {value:await globalThis.ResumeApplyPage[name](...values)};}catch(e){return {error:e.message};}},args:[method,args]});
   const output = result[0] && result[0].result;
@@ -107,16 +213,37 @@ function answerJson(source,fields) {
 const askedFields=run=>run.pickFields?run.pickFields:run.answerFieldIds?(run.fields || []).filter(field=>run.answerFieldIds.includes(field.id)):run.fields || [];
 async function collectAnswers(id,run,response) {
   const asked=askedFields(run),{retry=[]}=JSON.parse(response);
-  const answerBook=rememberAnswers(run.answerBook,run.fields || [],mergeGeneratedAnswers(asked,parseAnswers(response,asked)));
-  await saveRun(id,{answerBook,answers:recallAnswers(run.fields || [],answerBook).answers});
+  // Contact facts come from the profile only, never from ChatGPT.
+  const fixed=new Set(run.fixedIds || []);
+  const generated=mergeGeneratedAnswers(asked,parseAnswers(response,asked)).filter(item=>!fixed.has(item.id));
+  const answerBook=rememberAnswers(run.answerBook,run.fields || [],generated);
+  // Answers just generated belong to these exact fields, including repeated labels the book cannot hold.
+  const byId=new Map(generated.map(item=>[item.id,item.answer]));
+  const answers=currentAnswers({...run,answerBook}).answers.map(item=>byId.has(item.id)?{id:item.id,answer:byId.get(item.id)}:item);
+  await saveRun(id,{answerBook,answers,answersAt:Date.now()});
   return retry;
 }
 async function askQuestions(id,run,ids,{retried=false}={}) {
-  const wanted=new Set(ids);
-  const all=retried?run.fields:await refreshQuestionOptions(id,run,ids);
-  const fields=answerableQuestions(all.filter(field=>wanted.has(field.id)));
+  let wanted=new Set(ids),all;
+  if(retried)all=run.fields;
+  else try {all=await refreshQuestionOptions(id,run,ids);}
+  catch(error){
+    if(!/scan changed|question changed|scan was cleared|page changed/i.test(error.message))throw error;
+    // The form re-rendered since the scan: read it again and ask about the same questions.
+    const key=field=>outcomeKey(field)+'|'+field.pageUrl;
+    const keys=new Set(run.fields.filter(field=>wanted.has(field.id)).map(key));
+    await scanQuestions(id,{auto:true});
+    run=await getRun(id);
+    wanted=new Set(run.fields.filter(field=>keys.has(key(field))).map(field=>field.id));
+    if(!wanted.size)throw new Error('The application questions changed. Scan questions again.');
+    all=await refreshQuestionOptions(id,run,[...wanted]);
+  }
+  const fixed=new Set(run.fixedIds || []);
+  const fields=answerableQuestions(all.filter(field=>wanted.has(field.id) && !fixed.has(field.id)));
+  if(!fields.length)throw new Error('The remaining questions are answered from your profile, or left blank because the profile has no value.');
   const receipt=await chat(run.chatTabId,'send',answersPrompt(await request(jobPath(id)),fields,all),run.answerReceipt);
-  await saveRun(id,{answerReceipt:receipt,answerFieldIds:fields.map(field=>field.id),answerRetried:retried});
+  // Asked once per page: a rescan must not send these again on its own.
+  await saveRun(id,{answerReceipt:receipt,answerFieldIds:fields.map(field=>field.id),answerRetried:retried,askedIds:[...new Set([...(run.askedIds || []),...fields.map(field=>field.id)])]});
   await startResponseMonitor(id,'answers',receipt);
   return {receipt,count:fields.length};
 }
@@ -201,6 +328,9 @@ async function fillFields(id,run,requested) {
     }catch(error){group.forEach(item=>results.push({id:item.id,field:item.field,error:error.message}));}
   }
   const answerBook=rememberAnswers(run.answerBook,run.fields || [],items.map(item=>({id:item.field.id,answer:item.answer})));
+  // Saved for the site only once the site accepted it, in the wording it shows.
+  const confirmed=results.filter(result=>result.filled && result.field).map(result=>({id:result.field.id,value:result.value ?? items.find(item=>item.field.id===result.field.id)?.answer}));
+  if(confirmed.length)try {await rememberSite(await request(jobPath(id)),run.fields || [],confirmed);}catch(_){ /* saving must never fail a fill */ }
   const patch={answerBook};
   if(run.autopilot?.active) {
     const keys=items.map(item=>`${item.pageUrl}|${outcomeKey(item.field)}`);
@@ -269,7 +399,7 @@ async function uploadResumeField(id,run,field) {
 // One click: read the form, upload the resume, get answers, fill, and repeat for
 // any questions the answers reveal. Next, Submit and consent stay with the user.
 async function startAutoFill(id,run) {
-  await saveRun(id,{autopilot:{active:true,round:0,filled:0,failed:[],attempted:[],note:'',page:1,pageFailures:0,previousPage:null,waiting:null}});
+  await saveRun(id,{autoSummary:null,autopilot:{active:true,round:0,filled:0,failed:[],attempted:[],note:'',page:1,pageFailures:0,previousPage:null,waiting:null}});
   return autoFillPage(id);
 }
 const pageSignature=fields=>`${fields[0]?.pageUrl || ''}|${fields.map(field=>field.label).join('|')}`;
@@ -311,7 +441,7 @@ async function autoFillPage(id) {
 async function autoFillStep(id) {
   const run=await getRun(id),autopilot=run.autopilot;
   if(!autopilot?.active)return {message:'Auto-fill stopped.'};
-  const recalled=recallAnswers(run.fields,run.answerBook);
+  const recalled=currentAnswers(run);
   if(recalled.unasked.length) {
     if(autopilot.round>=AUTO_ROUNDS)return finishAutoFill(id);
     await saveRun(id,{autopilot:{...autopilot,round:autopilot.round+1}});
@@ -352,8 +482,7 @@ async function advanceOrFinish(id) {
 }
 async function finishAutoFill(id,{closing='This is the last page Auto-fill can reach. Check the form, then click Submit yourself.'}={}) {
   const run=await getRun(id),autopilot=run.autopilot || {filled:0,failed:[],note:''};
-  await saveRun(id,{autopilot:null});
-  const recalled=recallAnswers(run.fields || [],run.answerBook);
+  const recalled=currentAnswers(run);
   const blank=answerableQuestions(run.fields || []).filter(field=>!field.manualOnly && (recalled.answers.find(item=>item.id===field.id)?.answer ?? '')==='').map(field=>field.label);
   const manual=(run.fields || []).filter(field=>field.manualOnly).map(field=>field.label);
   const parts=[`Auto-fill finished: ${autopilot.filled} field${autopilot.filled===1?'':'s'} filled.`];
@@ -362,7 +491,24 @@ async function finishAutoFill(id,{closing='This is the last page Auto-fill can r
   if(blank.length)parts.push(`No answer available: ${blank.join('; ')}.`);
   if(manual.length)parts.push(`Complete yourself: ${manual.join('; ')}.`);
   parts.push(closing);
+  // Kept so the app shows how Auto-fill ended until the next run.
+  const needsYou=!!autopilot.note || autopilot.failed.length>0 || blank.length>0 || manual.length>0;
+  await saveRun(id,{autopilot:null,autoSummary:{text:needsYou?'Needs you: '+parts.slice(1,-1).join(' '):'Form filled. Check it, then submit it yourself.',needsYou}});
   return {message:parts.join(' '),done:true};
+}
+// Carries on with Auto-fill once the user is past a CAPTCHA, sign-in or code, even when no
+// side panel is open. Runs on the background heartbeat.
+async function resumeWaitingAutoFill() {
+  for (const [id, run] of Object.entries(await runs())) {
+    if (!run.autopilot?.waiting || locks.has(id)) continue;
+    locks.add(id);
+    try {
+      if (await pageBlocker(run)) continue;
+      await saveRun(id,{autopilot:{...run.autopilot,waiting:null}});
+      const outcome = await autoFillPage(id);
+      chrome.runtime.sendMessage({event:'fill-progress',id,message:outcome.message}).catch(() => {});
+    } catch (_) { /* reported through the job's progress */ } finally {locks.delete(id);}
+  }
 }
 async function waitComplete(tabId) {
   const until = Date.now() + 60000;
@@ -380,24 +526,132 @@ async function requireReady(run) {
   }
   return tab;
 }
+// Job windows are cascaded so part of every one stays on screen. Chrome treats a
+// window that is completely covered as hidden and slows its timers, which would
+// stall filling and reading ChatGPT in the jobs behind.
+const CASCADE_STEP = 32, CASCADE_SLOTS = 8, PANEL_WIDTH = 400;
+async function jobWindowArea() {
+  const {jobWindowArea: saved} = await chrome.storage.session.get('jobWindowArea');
+  if (saved) return saved;
+  // The user's own browser window (usually maximized) marks out the screen to use.
+  const windows = await chrome.windows.getAll({windowTypes:['normal']});
+  const jobWindows = new Set(Object.values(await runs()).map(run => run.windowId).filter(Boolean));
+  const base = windows.find(win => win.focused && !jobWindows.has(win.id)) || windows.find(win => !jobWindows.has(win.id)) || windows[0];
+  const area = base && base.width ? {left:base.left || 0, top:base.top || 0, width:base.width, height:base.height} : null;
+  if (area) await chrome.storage.session.set({jobWindowArea:area});
+  return area;
+}
+async function openJobWindow(url, id) {
+  const all = await runs(), used = new Set();
+  for (const [otherId, other] of Object.entries(all)) {
+    if (otherId === id || other.windowSlot == null || !other.windowId) continue;
+    try {await chrome.windows.get(other.windowId);used.add(other.windowSlot);} catch (_) { /* closed */ }
+  }
+  let slot = 0;while (used.has(slot) && slot < CASCADE_SLOTS - 1) slot++;
+  const area = await jobWindowArea().catch(() => null);
+  const span = CASCADE_STEP * (CASCADE_SLOTS - 1);
+  const bounds = area && area.width > span + 600 && area.height > span + 400
+    ? {left:area.left + slot * CASCADE_STEP, top:area.top + slot * CASCADE_STEP, width:area.width - span, height:area.height - span}
+    : {};
+  const win = await chrome.windows.create({url, type:'normal', focused:true, ...bounds});
+  await saveRun(id,{windowId:win.id, windowSlot:slot});
+  return win.tabs[0];
+}
+// The job's own Resume Apply window: a narrow window without tabs or address bar, docked
+// to the right of the job window, that only ever works on this job. Opens by itself.
+const jobPanelUrl = id => chrome.runtime.getURL('panel.html?job=' + encodeURIComponent(id));
+async function openPanelWindow(id, jobWindowId, existingId) {
+  const jobWindow = await chrome.windows.get(jobWindowId);
+  if (jobWindow.state === 'maximized' || jobWindow.state === 'fullscreen') await chrome.windows.update(jobWindowId,{state:'normal'}).catch(() => {});
+  const current = await chrome.windows.get(jobWindowId);
+  const area = await jobWindowArea().catch(() => null);
+  const {job, panel} = panelBounds(current, area, PANEL_WIDTH);
+  let shrink = 0;
+  if (current.state === 'normal' && job.width < current.width) {
+    await chrome.windows.update(jobWindowId,{width:job.width}).catch(() => {});
+    shrink = current.width - job.width;
+  }
+  const place = current.state === 'normal' ? panel : {};
+  if (existingId) {
+    let open = false;try {await chrome.windows.get(existingId);open = true;} catch (_) { /* closed: open it again */ }
+    if (open) {await chrome.windows.update(existingId,{...place,focused:false}).catch(() => {});return {id:existingId, shrink};}
+  }
+  // On a screen too small to dock it, Chrome refuses the position; open it where Chrome chooses.
+  const win = await chrome.windows.create({url:jobPanelUrl(id),type:'popup',focused:false,...place})
+    .catch(() => chrome.windows.create({url:jobPanelUrl(id),type:'popup',focused:false,width:PANEL_WIDTH}));
+  return {id:win.id, shrink};
+}
+// Opens (or brings back) the job's Resume Apply window, docked to the right of its window.
+async function showDetails(id) {
+  const run = await getRun(id);
+  let tab;try {tab = await chrome.tabs.get(run.jobTabId);} catch (_) {throw new Error("This job's window was closed. Choose Reopen windows.");}
+  const docked = await openPanelWindow(id, tab.windowId, run.panelWindowId);
+  await saveRun(id,{panelWindowId:docked.id, panelShrink:(run.panelWindowId === docked.id ? run.panelShrink || 0 : 0) + docked.shrink});
+  raising = Date.now();
+  await chrome.windows.update(tab.windowId,{focused:true}).catch(() => {});
+  raising = Date.now();
+  await chrome.windows.update(docked.id,{focused:true}).catch(() => {});
+  return {message:"Showing this job's details in Chrome."};
+}
+// Clicking a job window brings its Resume Apply window up with it; closing the job
+// window closes its Resume Apply window.
+let raising = 0;
+chrome.windows.onFocusChanged.addListener(async windowId => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE || Date.now() - raising < 800) return;
+  const run = Object.values(await runs()).find(item => item.windowId === windowId && item.panelWindowId);
+  if (!run) return;
+  raising = Date.now();
+  await chrome.windows.update(run.panelWindowId,{focused:true}).catch(() => {});
+  await chrome.windows.update(windowId,{focused:true}).catch(() => {});
+});
+chrome.windows.onRemoved.addListener(async windowId => {
+  for (const [id, run] of Object.entries(await runs())) {
+    if (run.windowId === windowId && run.panelWindowId) {await chrome.windows.remove(run.panelWindowId).catch(() => {});await saveRun(id,{panelWindowId:null});}
+    else if (run.panelWindowId === windowId) {
+      if (run.panelShrink > 0) {
+        try {const win = await chrome.windows.get(run.windowId);if (win.state === 'normal') await chrome.windows.update(run.windowId,{width:win.width + run.panelShrink});} catch (_) { /* job window gone */ }
+      }
+      await saveRun(id,{panelWindowId:null, panelShrink:0});
+    }
+  }
+});
+// The job description from the posting behind an application-form link, trying each
+// known source in turn (the site's public posting data, then the posting page itself).
+async function postingDescription(link) {
+  for (const source of jdSources(link)) {
+    try {
+      const res = await fetch(source.url, {headers:{Accept:source.kind === 'page' ? 'text/html' : 'application/json'}, credentials:'omit', signal:AbortSignal.timeout(15000)});
+      if (!res.ok) continue;
+      const posting = parseJdSource(source, await res.text());
+      if (posting) return {...posting, url:source.kind === 'page' ? source.url : link};
+    } catch (_) { /* try the next source */ }
+  }
+  return null;
+}
 async function openTabs(id, {checkReady = true} = {}) {
   const job = await request(jobPath(id));
   let run = (await runs())[id] || await recoverRun(id) || {};
   let jobTab, chatTab;
   try {jobTab = await chrome.tabs.get(run.jobTabId);} catch (_) { /* not opened yet */ }
   try {chatTab = await chrome.tabs.get(run.chatTabId);} catch (_) { /* not opened yet */ }
-  if (!jobTab) jobTab = await chrome.tabs.create({url:job.url,active:false});
+  // Each job gets its own window with the job site and its own new ChatGPT conversation
+  // side by side, and its own Resume Apply window docked on the right.
+  if (!jobTab) jobTab = await openJobWindow(job.url,id);
   if (!chatTab) chatTab = await chrome.tabs.create({url:'https://chatgpt.com/',windowId:jobTab.windowId,active:false});
+  // A Resume Apply tab from an earlier layout is replaced by the docked window.
+  if (run.panelTabId) {await chrome.tabs.remove(run.panelTabId).catch(() => {});}
   const layout = await arrangeWorkspace(chrome,jobTab.id,chatTab.id);
+  let panelWindowId = null;
+  if (run.panelWindowId) {try {await chrome.windows.get(run.panelWindowId);panelWindowId = (await openPanelWindow(id,jobTab.windowId,run.panelWindowId)).id;} catch (_) { /* closed */ }}
   await chrome.tabGroups.update(layout.groupId,{title:(job.company || job.title || 'Job application').slice(0,80),color:'blue',collapsed:false});
   const hasAccess = await chrome.permissions.contains({origins:[new URL(job.url).origin+'/*']});
-  run = await saveRun(id,{jobTabId:jobTab.id,chatTabId:chatTab.id,...layout,ready:false,autoOpened:true,needsSiteAccess:!hasAccess,autoOpenError:''});
+  run = await saveRun(id,{jobTabId:jobTab.id,chatTabId:chatTab.id,panelTabId:null,panelWindowId,windowId:jobTab.windowId,...layout,layoutNotice:layout.layoutNotice || '',ready:false,autoOpened:true,needsSiteAccess:!hasAccess,autoOpenError:''});
   await chrome.storage.session.set({activeJobId:id});
   await request(jobPath(id)+'/status',{status:'tabs-opened'});
   await chrome.tabs.update(jobTab.id,{active:true});
   await chrome.windows.update(jobTab.windowId,{focused:true});
   if (checkReady) await requireReady(run);
-  return {message:layout.layout === 'split' ? 'Job site and ChatGPT are open in split view.' : layout.layoutNotice,layout:layout.layout};
+  return {message:layout.layout === 'split' ? 'Job site and ChatGPT are side by side.' : layout.layoutNotice,layout:layout.layout};
 }
 async function openNewAssignments(state) {
   for (const job of state.jobs.filter(job => job.status === 'assigned')) {
@@ -412,6 +666,63 @@ async function openNewAssignments(state) {
     chrome.runtime.sendMessage({event:'jobs-updated',id:job.id}).catch(() => {});
   }
 }
+// Steps started from the app: each runs exactly as the same button in the job's Resume
+// Apply window would, one at a time per job, and its outcome is reported to the app.
+const runningCommands = new Set();
+const APP_COMMANDS = {
+  open: id => command({action:'open',id}),
+  // Detect the job description, then send the resume prompt to this job's ChatGPT.
+  prepare: async id => {const {job} = await command({action:'extract',id});return command({action:'sendResume',id,job});},
+  confirmResume: id => command({action:'confirmResume',id,confirmed:true}),
+  auto: id => command({action:'auto',id}),
+  scan: id => command({action:'scan',id}),
+  fill: async id => {
+    const run = await getRun(id);
+    const answers = currentAnswers(run).answers.filter(item=>item.answer!=null && item.answer!=='' && !(Array.isArray(item.answer) && !item.answer.length)).map(item => ({id:item.id, answer:item.answer}));
+    if (!answers.length) throw new Error('There are no answers to fill yet. Ask ChatGPT first.');
+    return command({action:'fill',id,approved:true,answers});
+  },
+  ask: id => command({action:'sendAnswers',id}),
+  complete: id => command({action:'complete',id,confirmed:true}),
+  details: id => showDetails(id),
+  // Brings the job's window to the front with its application tab showing; its Resume Apply
+  // window comes up with it.
+  focus: async id => {
+    const run = await getRun(id);
+    let tab;try {tab = await chrome.tabs.get(run.jobTabId);} catch (_) {throw new Error("This job's window was closed. Click Reopen.");}
+    const win = await chrome.windows.get(tab.windowId);
+    // Resume Apply first, then the job window on top of it, so typing goes to the job page.
+    // The focus handler that brings Resume Apply along is held off meanwhile.
+    raising = Date.now();
+    if (win.state === 'minimized') await chrome.windows.update(tab.windowId,{state:'normal'});
+    await chrome.tabs.update(tab.id,{active:true});
+    if (run.panelWindowId) await chrome.windows.update(run.panelWindowId,{focused:true}).catch(() => {});
+    raising = Date.now();
+    await chrome.windows.update(tab.windowId,{focused:true});
+    return {message:'Showing this job in Chrome.'};
+  },
+};
+function runAppCommands(state) {
+  for (const job of state.jobs || []) for (const queued of job.commands || []) {
+    if (runningCommands.has(queued.id) || !APP_COMMANDS[queued.action]) continue;
+    runningCommands.add(queued.id);
+    (async () => {
+      let outcome;
+      // Waits while the same job is busy with a step started from its window. Showing the
+      // window changes nothing in the job, so it never waits.
+      const quick = queued.action === 'focus' || queued.action === 'details';
+      for (let i = 0; !quick && i < 600 && locks.has(job.id); i++) await new Promise(resolve => setTimeout(resolve, 500));
+      if (!quick) locks.add(job.id);
+      try {const result = await APP_COMMANDS[queued.action](job.id);outcome = {ok:true, message:result?.message || 'Done.'};}
+      catch (error) {outcome = {ok:false, message:error.message || String(error)};}
+      finally {if (!quick) locks.delete(job.id);}
+      await request(jobPath(job.id) + '/command-result', {commandId:queued.id, ...outcome}).catch(() => {});
+      // The job's Resume Apply window shows the change too.
+      if (!quick) chrome.runtime.sendMessage({event:'fill-progress', id:job.id, message:outcome.message}).catch(() => {});
+      runningCommands.delete(queued.id);
+    })();
+  }
+}
 function startWatcher() {
   if (watching) return;
   watching = true;
@@ -421,7 +732,7 @@ function startWatcher() {
       while ((await chrome.storage.local.get('credentials')).credentials) {
         try {
           const state = await request('/v1/events?after='+encodeURIComponent(cursor));
-          cursor = state.cursor || '';await openNewAssignments(state);
+          cursor = state.cursor || '';await openNewAssignments(state);runAppCommands(state);
         } catch (_) {await new Promise(resolve => setTimeout(resolve,10000));}
       }
     } finally {watching = false;}
@@ -430,6 +741,8 @@ function startWatcher() {
 
 async function scanQuestions(id,{fillOutcomes=null,auto=false}={}) {
   const run = await getRun(id);await requireReady(run);
+  // The form may hold the user's own corrections: keep them before reading it again.
+  await harvestAnswers(id,run).catch(()=>{});
   let results, warning = '';
   try {
     await chrome.scripting.executeScript({target:{tabId:run.jobTabId,allFrames:true},files:['page-tools.js']});
@@ -438,15 +751,29 @@ async function scanQuestions(id,{fillOutcomes=null,auto=false}={}) {
     results = [{frameId:0,result:await page(run.jobTabId,'scan')}];
     warning = ' Some embedded frames could not be accessed; complete those fields manually or open the form directly.';
   }
-  const fields = results.flatMap(result => (result.result && result.result.fields || []).map(field => ({...field,localId:field.id,id:`${result.frameId}:${field.id}`,frameId:result.frameId,pageUrl:result.result.url})));
+  const fields = results.flatMap(result => (result.result && result.result.fields || []).map(field => ({...field,localId:field.id,id:`${result.frameId}:${field.id}`,frameId:result.frameId,pageUrl:result.result.url,site:result.result.site})));
   if(run.responseMonitor?.kind==='answers')await chat(run.chatTabId,'stopResponseWatch').catch(()=>{});
-  const recalled=recallAnswers(fields,run.answerBook);
-  const seen=new Map();for(const field of recalled.fields)seen.set(outcomeKey(field),(seen.get(outcomeKey(field)) || 0)+1);
-  const marked=recalled.fields.map(field=>seen.get(outcomeKey(field))===1 && fillOutcomes?.has(outcomeKey(field))?{...field,fillResult:fillOutcomes.get(outcomeKey(field))}:field);
-  await saveRun(id,{fields:marked,answers:recalled.answers,answerReceipt:null,answerFieldIds:null,answerRetried:false,pickFields:null,pendingFillResults:null,...(fillOutcomes || auto?{}:{autopilot:null}),...(run.responseMonitor?.kind==='answers'?{responseMonitor:null}:{})});
+  // Same page rescanned: keep what was already asked and answered for each question.
+  const carried=carryPageState(run,fields);
+  const recalled=currentAnswers({fields,answerBook:run.answerBook,askedIds:carried.askedIds,answers:carried.answers});
+  const known=await knownAnswers(await request(jobPath(id)),recalled.fields);
+  const answers=recalled.answers.map(item=>{
+    if(item.answer!=null)return item;
+    if(known.fixed.has(item.id))return {id:item.id,answer:known.profile.get(item.id) ?? null};
+    const answer=known.site.has(item.id)?known.site.get(item.id):known.profile.get(item.id);
+    return answer==null?item:{id:item.id,answer};
+  });
+  const reusedIds=answers.filter((item,index)=>item.answer!=null && recalled.answers[index].answer==null).map(item=>item.id);
+  // Answered without ChatGPT, or contact facts it must never be asked.
+  const askedIds=[...new Set([...carried.askedIds,...reusedIds,...known.fixed])];
+  const unasked=recalled.unasked.filter(fieldId=>!askedIds.includes(fieldId));
+  const seen=new Map();for(const field of known.fields)seen.set(outcomeKey(field),(seen.get(outcomeKey(field)) || 0)+1);
+  const marked=known.fields.map(field=>seen.get(outcomeKey(field))===1 && fillOutcomes?.has(outcomeKey(field))?{...field,fillResult:fillOutcomes.get(outcomeKey(field))}:field);
+  await saveRun(id,{fields:marked,answers,answersAt:answers.some(item=>item.answer!=null && item.answer!=='' && !(Array.isArray(item.answer) && !item.answer.length))?Date.now():null,askedIds,fixedIds:[...known.fixed],answerReceipt:null,answerFieldIds:null,answerRetried:false,pickFields:null,pendingFillResults:null,...(fillOutcomes || auto?{}:{autopilot:null}),...(run.responseMonitor?.kind==='answers'?{responseMonitor:null}:{})});
   if(!fillOutcomes)await request(jobPath(id) + '/status',{status:'questions-scanned'});
-  const known=answerableQuestions(fields).length-recalled.unasked.length;
-  return {newQuestions:recalled.unasked.length,message:`Scanned ${fields.length} fields.${known?` Reused ${known} earlier answer${known===1?'':'s'}.`:''} ${recalled.unasked.length?'Click Ask ChatGPT to generate answers.':'Review the answers below.'}${warning}`};
+  const earlier=answerableQuestions(fields).length-recalled.unasked.length;
+  const notes=[earlier?`Reused ${earlier} earlier answer${earlier===1?'':'s'}.`:'',reusedIds.length?`${reusedIds.length} filled from your profile or saved site answers.`:''].filter(Boolean).join(' ');
+  return {newQuestions:unasked.length,message:`Scanned ${fields.length} fields.${notes?' '+notes:''} ${unasked.length?'Click Ask ChatGPT to generate answers.':'Review the answers below.'}${warning}`};
 }
 async function refreshQuestionOptions(id,run,ids) {
   await requireReady(run);
@@ -479,16 +806,43 @@ async function command(message) {
     await saveRun(id,{...current,jobTabId:suggestedTab.id,ready:false,fields:[],answers:[]});
     return openTabs(id);
   }
-  if (action === 'detail') return {job:await request(jobPath(id)),run:(await runs())[id] || {}};
+  if (action === 'detail') {
+    const job=await request(jobPath(id)),run=(await runs())[id] || {};
+    return {job,run,siteMemory:await siteMemory(job,run).catch(()=>[])};
+  }
+  if (action === 'clearSiteAnswers') {
+    const job=await request(jobPath(id)),site=String(message.site || '');
+    await (siteWrites=siteWrites.then(async()=>{const all=await siteBooks();if(all[job.profileId])delete all[job.profileId][site];await chrome.storage.local.set({siteAnswers:all});}).catch(()=>{}));
+    return {message:`Saved answers for ${site} cleared for this profile.`};
+  }
   if (action === 'complete') {
     if (message.confirmed !== true) throw new Error('Confirm that the application ended.');
     const previous=(await runs())[id];
     if(previous?.chatTabId)await chat(previous.chatTabId,'stopResponseWatch').catch(()=>{});
     if(previous?.responseMonitor)await saveRun(id,{responseMonitor:{...previous.responseMonitor,status:'cancelled'}});
-    await request(jobPath(id) + '/complete',{confirmed:true});return {message:'Application marked ended in Resume Manager.'};
+    await request(jobPath(id) + '/complete',{confirmed:true});
+    // Its tabs are done with: close the job's application tab, its ChatGPT tab and its
+    // Resume Apply window. Only these, so other tabs sharing the window stay; an empty
+    // window closes by itself. Done last, since the request may come from that window.
+    if (previous) {
+      const tabs = [previous.jobTabId, previous.chatTabId].filter(Number.isInteger);
+      setTimeout(() => {
+        if (previous.panelWindowId) chrome.windows.remove(previous.panelWindowId).catch(() => {});
+        if (tabs.length) chrome.tabs.remove(tabs).catch(() => {});
+      }, 300);
+    }
+    return {message:"Application marked ended in Resume Manager. Its tabs are closed."};
   }
   const run = action === 'readResume' && message.response ? (await runs())[id] || {} : await getRun(id);
-  if (action === 'extract') {await requireReady(run);return {job:await page(run.jobTabId,'job')};}
+  if (action === 'extract') {
+    await requireReady(run);
+    const found = await page(run.jobTabId,'job');
+    // An application-form link: read the job's description from its posting instead.
+    const posting = await postingDescription((await chrome.tabs.get(run.jobTabId)).url || found.url).catch(() => null);
+    if (!posting) return {job:found};
+    return {job:{...found, title:posting.title || found.title, company:posting.company || found.company, description:posting.description, descriptionSource:posting.url},
+      message:'This page is the application form, so the job description was read from the job posting. Check it before sending.'};
+  }
   if (action === 'sendResume') {
     const job = await request(jobPath(id) + '/jd', message.job);
     const receipt = await chat(run.chatTabId,'send',job.resumePrompt,run.resumeReceipt);
@@ -516,6 +870,12 @@ async function command(message) {
     return {job,message:'PDF, DOCX, and JD.txt exported by Resume Manager.'};
   }
   if (action === 'scan') return scanQuestions(id);
+  if (action === 'saveAnswers') {
+    await requireReady(run);
+    const saved=await harvestAnswers(id,run);
+    if(saved==null)throw new Error('Scan this application page first, then save its answers.');
+    return {message:saved?`Saved ${saved} answer${saved===1?'':'s'} for this site. Later applications on it will reuse them.`:'Saved answers for this site are already up to date.'};
+  }
   if (action === 'pollAnswers') {
     if(run.responseMonitor?.kind!=='answers' || run.responseMonitor.status!=='waiting')return {run};
     const tab=await chrome.tabs.get(run.chatTabId);
@@ -531,9 +891,10 @@ async function command(message) {
     if (!run.fields || !run.fields.length) throw new Error('Scan questions first.');
     const answerable = answerableQuestions(run.fields);
     if (!answerable.length) throw new Error('No answerable questions were found. Upload files and complete consent or signature controls on the application.');
-    const recalled = recallAnswers(run.fields,run.answerBook);
+    const recalled = currentAnswers(run);
     // With nothing new to ask, another click retries the questions still blank.
-    const blank = answerable.filter(field=>(recalled.answers.find(item=>item.id===field.id)?.answer ?? '')==='').map(field=>field.id);
+    const fixed = new Set(run.fixedIds || []);
+    const blank = answerable.filter(field=>!fixed.has(field.id) && (recalled.answers.find(item=>item.id===field.id)?.answer ?? '')==='').map(field=>field.id);
     const targets = recalled.unasked.length ? recalled.unasked : blank;
     if (!targets.length) return {message:'Every question already has an answer. Review them and fill.'};
     const {receipt,count:asked} = await askQuestions(id,run,targets);
@@ -569,6 +930,7 @@ async function command(message) {
     if (message.approved !== true || !Array.isArray(message.answers)) throw new Error('Review and approve answers before filling.');
     await request(jobPath(id) + '/status',{status:'answers-reviewed'});
     const results=await fillFields(id,run,message.answers);
+    await saveRun(id,{filledAt:Date.now()});
     return settleFill(id,await getRun(id),results);
   }
   if (action === 'auto') return startAutoFill(id,run);
@@ -582,6 +944,7 @@ async function command(message) {
   throw new Error('Unknown command.');
 }
 chrome.runtime.onMessage.addListener((message,sender,respond) => {
+  if(message.event==='page-submitting'){rememberSubmitted(message,sender).catch(()=>{});return false;}
   if(message.event==='chat-response-ready' || message.event==='chat-response-timeout'){collectMonitoredResponse(message,sender).then(respond,error=>respond({error:error.message}));return true;}
   if (!sender.url || !sender.url.startsWith(chrome.runtime.getURL('panel.html'))) return false;
   const key = ['detail','pollAnswers'].includes(message.action) ? message.action+':'+message.id : message.id || message.action;
@@ -600,7 +963,7 @@ chrome.action.onClicked.addListener(tab => {
   startWatcher();
 });
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'heartbeat') {resumeResponseMonitors();startWatcher();request('/v1/state').then(openNewAssignments).catch(() => {});}
+  if (alarm.name === 'heartbeat') {resumeResponseMonitors();resumeWaitingAutoFill().catch(() => {});startWatcher();request('/v1/state').then(openNewAssignments).catch(() => {});}
 });
 chrome.runtime.onStartup.addListener(() => {chrome.alarms.create('heartbeat',{periodInMinutes:0.5});startWatcher();});
 chrome.runtime.onInstalled.addListener(() => {chrome.alarms.create('heartbeat',{periodInMinutes:0.5});startWatcher();});

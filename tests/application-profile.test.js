@@ -9,6 +9,12 @@ test('older profiles start unanswered without implying no or nondisclosure', () 
   assert.equal(result.criminalHistory, '');
   assert.equal(result.sponsorshipNow, '');
   assert.equal(result.hasCompanyConnections, 'No');
+  assert.equal(result.restrictiveEmployerAgreement, '');
+  assert.equal(result.hiringCompanyCompetitorOfRecentEmployer, '');
+  assert.equal(result.willingToTravel, '');
+  assert.equal(normalize({willingToTravel:'Yes, domestic only'}).willingToTravel, 'Yes, domestic only');
+  assert.equal(normalize({hiringCompanyCompetitorOfRecentEmployer:'No'}).hiringCompanyCompetitorOfRecentEmployer, 'No');
+  assert.equal(normalize({restrictiveEmployerAgreement:'No'}).restrictiveEmployerAgreement, 'No');
 });
 
 test('application details preserve selections and default company connections to No', () => {

@@ -29,7 +29,11 @@
   const boolFieldIds = {
     linkedinVisible: 'linkedin-visible',
     githubVisible: 'github-visible',
+    useJsonEmployerNames: 'use-json-employer-names',
   };
+  // Switches that start off; the rest (visibility) start on.
+  const boolDefaults = { useJsonEmployerNames: false };
+  const boolDefault = key => Object.hasOwn(boolDefaults, key) ? boolDefaults[key] : true;
   const fieldEls = Object.fromEntries(
     Object.entries(fieldIds).map(([key, id]) => [key, document.getElementById(id)])
   );
@@ -230,6 +234,7 @@
       github: p.github || '',
       githubVisible:
         typeof p.githubVisible === 'boolean' ? p.githubVisible : true,
+      useJsonEmployerNames: p.useJsonEmployerNames === true,
       // Migrated from the older `seniorityLevel` field.
       title: p.title || p.seniorityLevel || '',
       applicationDetails: window.App.ApplicationProfile.normalize(p.applicationDetails),
@@ -339,16 +344,16 @@
     const label = displayName(profile);
 
     const tile = document.createElement('div');
-    tile.className = 'tile';
+    tile.className = 'tile group relative flex cursor-pointer flex-col items-center gap-3.5 rounded-panel border border-line bg-elev px-[18px] pb-[18px] pt-[22px] transition duration-[180ms] hover:-translate-y-0.5 hover:border-line-strong hover:bg-elev2 hover:shadow-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
     tile.tabIndex = 0;
     tile.setAttribute('role', 'button');
     tile.setAttribute('aria-label', `Open profile ${label}`);
 
     const actions = document.createElement('div');
-    actions.className = 'tile-actions';
+    actions.className = 'tile-actions absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100';
 
     const editBtn = document.createElement('button');
-    editBtn.className = 'icon-btn';
+    editBtn.className = 'icon-btn h-[30px] w-[30px] bg-hover text-ink hover:bg-hover-strong hover:text-ink';
     editBtn.title = 'Edit';
     editBtn.setAttribute('aria-label', `Edit ${label}`);
     editBtn.textContent = '✎';
@@ -358,7 +363,7 @@
     });
 
     const delBtn = document.createElement('button');
-    delBtn.className = 'icon-btn danger';
+    delBtn.className = 'icon-btn danger h-[30px] w-[30px] bg-hover text-ink hover:border-danger-line hover:bg-danger-bg hover:text-danger-hover';
     delBtn.title = 'Delete';
     delBtn.setAttribute('aria-label', `Delete ${label}`);
     delBtn.textContent = '✕';
@@ -370,12 +375,12 @@
     actions.append(editBtn, delBtn);
 
     const avatar = document.createElement('div');
-    avatar.className = 'avatar';
+    avatar.className = 'avatar h-24 w-24 rounded-[22px] text-[42px] tracking-[0.5px] shadow-[0_8px_20px_rgba(0,0,0,0.25)] [text-shadow:0_2px_6px_rgba(0,0,0,0.25)]';
     avatar.style.backgroundColor = profile.color;
     avatar.textContent = initialFor(profile);
 
     const name = document.createElement('div');
-    name.className = 'tile-name';
+    name.className = 'tile-name max-w-full truncate text-center text-[15px] font-medium';
     name.textContent = label;
     name.title = label;
 
@@ -411,8 +416,13 @@
     if (subtitle) {
       if (view === 'list') subtitle.textContent = 'Choose a profile to continue';
       else if (view === 'picker') subtitle.textContent = 'Choose a resume template';
+      else if (view === 'discovery') subtitle.textContent = 'Find jobs for your profiles';
     }
     window.App.ExtensionWorkspace.close();
+    if (window.App.Discovery) {
+      if (view === 'discovery') window.App.Discovery.open();
+      else window.App.Discovery.close();
+    }
     const extensionMode = view === 'workspace' && profile && profile.applicationMode === 'extension';
     document.getElementById('manual-workspace').hidden = !!extensionMode;
     document.getElementById('extension-workspace').hidden = !extensionMode;
@@ -441,6 +451,7 @@
 
   function handleRoute() {
     const hash = window.location.hash || '#/';
+    if (hash === '#/discovery') { setView('discovery'); return; }
     const mt = hash.match(/^#\/profile\/([^/]+)\/template$/);
     if (mt) {
       const id = decodeURIComponent(mt[1]);
@@ -484,15 +495,33 @@
     updatePickerSelection();
   }
 
+  // Picker tile styles. `template-tile` is a hook (selection toggles `selected`).
+  const TEMPLATE_TILE_CLASS =
+    'template-tile flex cursor-pointer flex-col items-stretch overflow-hidden rounded-panel border-2 border-line bg-elev p-0 text-left ' +
+    'transition-[border-color,box-shadow,transform] duration-150 hover:border-line-strong hover:shadow-soft ' +
+    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ' +
+    '[&.selected]:!border-accent [&.selected]:!shadow-[0_0_0_3px_var(--accent-ring)]';
+  // The thumbnail markup comes from each template (src/renderer/templates/*.js) and
+  // uses the marker classes tpl-thumb / tt-*; they are styled from here.
+  const TEMPLATE_THUMB_CLASS =
+    'pointer-events-none aspect-[8.5/11] overflow-hidden border-b border-line bg-white ' +
+    '[&_.tpl-thumb]:h-full [&_.tpl-thumb]:w-full [&_.tpl-thumb]:bg-white [&_.tpl-thumb]:px-2 [&_.tpl-thumb]:py-2.5 [&_.tpl-thumb]:text-[#cbd5e1] ' +
+    '[&_.tt-name]:mb-[5px] [&_.tt-name]:h-2 [&_.tt-name]:w-[55%] [&_.tt-name]:rounded-sm [&_.tt-name]:bg-[#334155] ' +
+    '[&_.tt-tag]:mb-2 [&_.tt-tag]:h-[5px] [&_.tt-tag]:w-[40%] [&_.tt-tag]:rounded-sm [&_.tt-tag]:bg-[#94a3b8] ' +
+    '[&_.tt-name.center]:mx-auto [&_.tt-tag.center]:mx-auto ' +
+    '[&_.tt-row]:mb-2 [&_.tt-row]:flex [&_.tt-row]:gap-1 [&_.tt-row.center]:justify-center ' +
+    '[&_.tt-row_span]:block [&_.tt-row_span]:h-1 [&_.tt-row_span]:w-3.5 [&_.tt-row_span]:rounded-sm [&_.tt-row_span]:bg-[#cbd5e1] ' +
+    '[&_.tt-block]:mb-[5px] [&_.tt-block]:rounded-sm [&_.tt-block]:bg-[#e2e8f0] [&_.tt-block.s]:h-3.5 [&_.tt-block.m]:h-[22px]';
+
   function buildTemplateTile(tpl) {
     const tile = document.createElement('button');
     tile.type = 'button';
-    tile.className = 'template-tile';
+    tile.className = TEMPLATE_TILE_CLASS;
     tile.dataset.templateId = tpl.id;
     tile.setAttribute('aria-label', `Choose template ${tpl.name}`);
 
     const thumbWrap = document.createElement('div');
-    thumbWrap.className = 'template-thumb-wrap';
+    thumbWrap.className = TEMPLATE_THUMB_CLASS;
     if (typeof tpl.thumbnail === 'function') {
       thumbWrap.innerHTML = tpl.thumbnail();
     } else {
@@ -500,12 +529,12 @@
     }
 
     const meta = document.createElement('div');
-    meta.className = 'template-meta';
+    meta.className = 'px-3.5 py-3';
     const name = document.createElement('div');
-    name.className = 'template-name';
+    name.className = 'mb-1 text-sm font-bold';
     name.textContent = tpl.name || tpl.id;
     const desc = document.createElement('div');
-    desc.className = 'template-desc muted small';
+    desc.className = 'muted small m-0 leading-[1.35]';
     desc.textContent = tpl.description || '';
     meta.append(name, desc);
 
@@ -569,9 +598,8 @@
     }
     for (const key of Object.keys(boolFieldIds)) {
       const el = boolFieldEls[key];
-      // Default to true when the value is undefined (existing profiles get
-      // visibility on by default).
-      if (el) el.checked = profile[key] !== false;
+      // A value the profile never saved takes the switch's default.
+      if (el) el.checked = typeof profile[key] === 'boolean' ? profile[key] : boolDefault(key);
     }
   }
 
@@ -586,7 +614,7 @@
       const el = boolFieldEls[key];
       // Visibility toggles default on; the work-mode toggles default off.
       if (el) {
-        el.checked = true;
+        el.checked = boolDefault(key);
       }
     }
   }
@@ -605,28 +633,29 @@
   for (const [key, title, group, options] of applicationProfile.fields) {
     if (group !== applicationGroup) {
       const heading = document.createElement('h4');
+      heading.className = 'my-[21px] text-base font-bold';
       heading.textContent = group;
       applicationGrid = document.createElement('div');
-      applicationGrid.className = 'form-grid';
+      applicationGrid.className = 'form-grid mb-[18px] grid grid-cols-2 gap-x-3.5 gap-y-3 max-[560px]:grid-cols-1';
       applicationContainer.append(heading, applicationGrid);
       applicationGroup = group;
     }
     const label = document.createElement('label');
-    label.className = 'field';
+    label.className = 'field block';
     const caption = document.createElement('span');
-    caption.className = 'field-label';
+    caption.className = 'field-label mb-1.5 block';
     caption.textContent = title;
     const input = document.createElement(options ? 'select' : 'input');
     input.id = `application-${key}`;
     if (options) {
-      input.className = 'select';
+      input.className = 'select block w-full';
       for (const value of (key === 'hasCompanyConnections' ? options : ['', ...options])) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = value || 'Unanswered';
         input.append(option);
       }
-    } else { input.type = 'text'; }
+    } else { input.type = 'text'; input.className = 'field-input'; }
     applicationInputs[key] = input;
     label.append(caption, input);
     applicationGrid.append(label);
@@ -643,19 +672,24 @@
     });
   }
 
+  // Inputs inside a work / education / certification entry.
+  const ENTRY_INPUT_CLASS = 'w-full rounded-lg border border-line bg-elev px-2.5 py-2 text-[13px] text-ink outline-none transition-colors placeholder:text-muted focus:border-accent focus:ring-[3px] focus:ring-accent-ring';
+
   function makeInput(key, placeholder, value, opts) {
     const inp = document.createElement('input');
+    inp.className = ENTRY_INPUT_CLASS;
     inp.type = 'text';
     inp.dataset.k = key;
     inp.placeholder = placeholder;
     inp.autocomplete = 'off';
     inp.value = value || '';
-    if (opts && opts.spanFull) inp.classList.add('span-2');
+    if (opts && opts.spanFull) inp.classList.add('span-2', 'col-span-full');
     return inp;
   }
 
   function makeNumberInput(key, placeholder, value, opts) {
     const inp = document.createElement('input');
+    inp.className = ENTRY_INPUT_CLASS;
     inp.type = 'number';
     inp.dataset.k = key;
     inp.placeholder = placeholder || '';
@@ -666,14 +700,14 @@
     if (value !== null && value !== undefined && value !== '') {
       inp.value = String(value);
     }
-    if (opts && opts.spanFull) inp.classList.add('span-2');
+    if (opts && opts.spanFull) inp.classList.add('span-2', 'col-span-full');
     return inp;
   }
 
   function makeRemoveBtn(onClick) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'remove-entry';
+    btn.className = 'remove-entry absolute right-1.5 top-1.5 inline-flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-[7px] text-base leading-none text-muted hover:bg-danger-bg hover:text-danger-hover';
     btn.title = 'Remove entry';
     btn.setAttribute('aria-label', 'Remove entry');
     btn.textContent = '×';
@@ -683,9 +717,9 @@
 
   function buildEntryRow(inputs, onRemove) {
     const row = document.createElement('div');
-    row.className = 'entry-row';
+    row.className = 'entry-row relative rounded-[10px] border border-line bg-bg py-2.5 pl-2.5 pr-[38px]';
     const fields = document.createElement('div');
-    fields.className = 'entry-fields';
+    fields.className = 'entry-fields grid grid-cols-2 gap-2';
     for (const inp of inputs) fields.append(inp);
     row.append(makeRemoveBtn(() => onRemove(row)), fields);
     return row;
@@ -885,6 +919,28 @@
 
   newProfileBtn.addEventListener('click', () => openEditor('create'));
   emptyCreateBtn.addEventListener('click', () => openEditor('create'));
+
+  const discoveryBtn = document.getElementById('discovery-btn');
+  if (discoveryBtn) discoveryBtn.addEventListener('click', () => { window.location.hash = '#/discovery'; });
+
+  // Profiles for the Discovery screen. Job links are added through the same
+  // in-memory list the rest of the app saves, so no later save drops them.
+  window.App.Profiles = {
+    list: () => profiles.slice(),
+    async addJobLink(profileId, url) {
+      const target = profiles.find(p => p.id === profileId);
+      if (!target) throw new Error('Profile no longer exists.');
+      const [link] = window.App.ProfileWorkflow.parseJobLinks(url);
+      const current = target.extensionJobLinks || [];
+      if (current.includes(link)) return link;
+      const links = [...current, link];
+      const updated = profiles.map(p => p === target ? {...p, extensionJobLinks: links} : p);
+      const ok = await window.api.saveProfiles(updated);
+      if (ok === false) throw new Error('Could not save the job link on this profile.');
+      target.extensionJobLinks = links;
+      return link;
+    },
+  };
 
   const backBtn = document.getElementById('back-btn');
   if (backBtn) {

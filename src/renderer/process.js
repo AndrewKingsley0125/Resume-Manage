@@ -115,37 +115,54 @@
     });
   }
 
+  // Table cell styles (complete class strings so Tailwind can find them).
+  const CELL = 'border-b border-line px-3 py-2.5 text-left align-middle';
+  const CELL_CLASSES = {
+    'col-no': CELL + ' w-12 text-muted',
+    'col-company': CELL + ' max-w-[280px]',
+    'col-date': CELL + ' w-[195px] whitespace-nowrap tabular-nums',
+    'col-jd': CELL + ' w-20',
+    'col-resume': CELL + ' w-20',
+    'col-actions': 'border-b border-line px-3 py-2.5 text-right align-middle w-[90px] whitespace-nowrap',
+  };
+  const ROW_ACTION_BTN = 'ml-1 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-line bg-transparent text-sm leading-none text-muted transition-colors duration-150';
+  const ROW_ACTION_CLASSES = {
+    normal: ROW_ACTION_BTN + ' hover:border-line-strong hover:bg-hover hover:text-ink',
+    danger: ROW_ACTION_BTN + ' hover:border-danger-line hover:bg-danger-bg hover:text-danger-hover',
+  };
+
   function buildRow(p, idx) {
     const tr = document.createElement('tr');
+    tr.className = 'hover:bg-hover [&:last-child>td]:border-b-0';
     tr.appendChild(td(String(idx), 'col-no'));
     tr.appendChild(makeCompanyCell(p));
     tr.appendChild(td(formatDate(p.date), 'col-date'));
 
     // JD cell
     const jdTd = document.createElement('td');
-    jdTd.className = 'col-jd';
+    jdTd.className = CELL_CLASSES['col-jd'];
     if (p.hasJd) {
       jdTd.appendChild(makeRowBtn('View', () => openJdModal(p)));
     } else {
       jdTd.textContent = '—';
-      jdTd.classList.add('muted-cell');
+      jdTd.classList.add('text-muted');
     }
     tr.appendChild(jdTd);
 
     // Resume cell
     const rTd = document.createElement('td');
-    rTd.className = 'col-resume';
+    rTd.className = CELL_CLASSES['col-resume'];
     if (p.hasResume) {
       rTd.appendChild(makeRowBtn('View', () => openResumeModal(p)));
     } else {
       rTd.textContent = '—';
-      rTd.classList.add('muted-cell');
+      rTd.classList.add('text-muted');
     }
     tr.appendChild(rTd);
 
     // Actions cell (edit / delete)
     const aTd = document.createElement('td');
-    aTd.className = 'col-actions';
+    aTd.className = CELL_CLASSES['col-actions'];
     aTd.appendChild(makeActionBtn('✎', 'Edit company name', () => openRenameModal(p)));
     aTd.appendChild(makeActionBtn('✕', 'Delete this application', () => openDeleteModal(p), true));
     tr.appendChild(aTd);
@@ -155,10 +172,10 @@
 
   function makeCompanyCell(p) {
     const cell = document.createElement('td');
-    cell.className = 'col-company';
+    cell.className = CELL_CLASSES['col-company'];
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'company-folder-link';
+    btn.className = 'inline-block max-w-full cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-none bg-transparent p-0 text-left text-accent hover:underline focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
     btn.textContent = p.companyName;
     btn.title = 'Open folder in file explorer';
     btn.setAttribute('aria-label', `Open folder for ${p.companyName}`);
@@ -185,7 +202,7 @@
   function makeActionBtn(label, title, onClick, danger) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'row-action-btn' + (danger ? ' danger' : '');
+    b.className = ROW_ACTION_CLASSES[danger ? 'danger' : 'normal'];
     b.textContent = label;
     b.title = title;
     b.setAttribute('aria-label', title);
@@ -195,7 +212,7 @@
 
   function td(text, cls) {
     const cell = document.createElement('td');
-    if (cls) cell.className = cls;
+    if (cls) cell.className = CELL_CLASSES[cls] || cls;
     cell.textContent = text;
     return cell;
   }
@@ -203,7 +220,7 @@
   function makeRowBtn(label, onClick) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'row-link';
+    b.className = 'cursor-pointer rounded-full border border-line bg-transparent px-2.5 py-1 text-xs text-accent transition-colors duration-150 hover:border-accent hover:bg-accent-ring';
     b.textContent = label;
     b.addEventListener('click', onClick);
     return b;
@@ -408,10 +425,11 @@
     tbody.innerHTML = '';
     pendingImportCompanies.forEach((c, index) => {
       const tr = document.createElement('tr');
-      tr.className = c.status === 'new' ? 'import-new' : 'import-duplicate';
+      const isNew = c.status === 'new';
+      tr.className = isNew ? 'bg-success-bg [&:last-child>td]:border-b-0' : 'bg-danger-bg [&:last-child>td]:border-b-0';
 
       const nameTd = document.createElement('td');
-      nameTd.className = 'col-import-company';
+      nameTd.className = 'border-b border-line px-3 py-2 text-left align-middle ' + (isNew ? 'text-success' : 'text-danger');
       let label = c.name;
       if (c.status === 'duplicate' && c.existingName && c.existingName !== c.name) {
         label += ` (folder "${c.existingName}" exists)`;
@@ -420,11 +438,12 @@
       tr.appendChild(nameTd);
 
       const statusTd = document.createElement('td');
-      statusTd.className = 'col-import-status';
+      statusTd.className = 'w-[120px] whitespace-nowrap border-b border-line px-3 py-2 text-right align-middle';
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className =
-        'import-status-toggle ' + (c.status === 'new' ? 'is-new' : 'is-duplicate');
+      btn.className = isNew
+        ? 'min-w-[92px] cursor-pointer rounded-full border border-success-line bg-success-bg px-3 py-[5px] text-xs font-semibold text-success transition-[background-color,border-color,color,box-shadow] duration-150 hover:shadow-[0_0_0_2px_rgba(52,211,153,0.25)]'
+        : 'min-w-[92px] cursor-pointer rounded-full border border-danger-line bg-danger-bg px-3 py-[5px] text-xs font-semibold text-danger transition-[background-color,border-color,color,box-shadow] duration-150 hover:shadow-[0_0_0_2px_rgba(255,92,122,0.25)]';
       btn.textContent = c.status === 'new' ? 'New' : 'Duplicate';
       btn.title = c.status === 'new'
         ? 'Mark as duplicate (skip on import)'

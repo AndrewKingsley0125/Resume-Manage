@@ -1,0 +1,176 @@
+{
+ "apiVersion": "1",
+ "jobs": [
+  {
+   "id": "34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+   "title": " Security Engineer, Cloud",
+   "department": "Engineering",
+   "team": "Backend",
+   "employmentType": "FullTime",
+   "location": "New York, NY (HQ)",
+   "shouldDisplayCompensationOnJobPostings": true,
+   "secondaryLocations": [
+    {
+     "location": "Remote (Canada)",
+     "address": {
+      "postalAddress": {
+       "addressCountry": "Canada"
+      }
+     }
+    },
+    {
+     "location": "Remote (US)",
+     "address": {
+      "postalAddress": {
+       "addressCountry": "United States"
+      }
+     }
+    },
+    {
+     "location": "Miami, FL",
+     "address": {
+      "postalAddress": {
+       "addressRegion": "Florida",
+       "addressCountry": "USA",
+       "addressLocality": "Miami"
+      }
+     }
+    }
+   ],
+   "publishedAt": "2026-04-07T17:12:35.753+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "NY",
+     "addressCountry": "USA",
+     "addressLocality": "New York City"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+   "applyUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245/application",
+   "descriptionHtml": "<h1><strong>About Ramp</strong></h1><p style=\"min-height:1.5em\">Ramp is building the smart infrastructure for finance teams, embedded in the transaction flow of every dollar a business spends. We automate how over $275B in annualized spend flows in and out of 85,000+ companies: authorizing payments, flagging risk, categorizing spend, and closing books.</p><p style=\"min-height:1.5em\">The problems a",
+   "descriptionPlain": "ABOUT RAMP\n\nRamp is building the smart infrastructure for finance teams, embedded in the transaction flow of every dollar a business spends. We automate how over $275B in annualized spend flows in and out of 85,000+ companies: authorizing payments, flagging risk, categorizing spend, and closing books.\n\nThe problems are high-stakes, data-dense, and unforgiving.\n\nWe hire people with high agency and ",
+   "compensation": {
+    "compensationTierSummary": "$211.4K \u2013 $290.6K \u2022 Offers Equity",
+    "scrapeableCompensationSalarySummary": "$211.4K - $290.6K",
+    "compensationTiers": [
+     {
+      "id": "5f7a903e-36e4-492c-ac09-f2745d717daa",
+      "tierSummary": "$211.4K \u2013 $290.6K \u2022 Offers Equity",
+      "title": null,
+      "additionalInformation": null,
+      "components": [
+       {
+        "id": "3481c194-45fd-4b89-8592-e8f4d4b51f20",
+        "summary": "$211.4K \u2013 $290.6K",
+        "compensationType": "Salary",
+        "interval": "1 YEAR",
+        "currencyCode": "USD",
+        "minValue": 211400,
+        "maxValue": 290600
+       },
+       {
+        "id": "feaef96f-559f-4df8-a38c-3eee072a8d74",
+        "summary": "Offers Equity",
+        "compensationType": "EquityPercentage",
+        "interval": "NONE",
+        "currencyCode": null,
+        "minValue": null,
+        "maxValue": null
+       }
+      ]
+     }
+    ],
+    "summaryComponents": [
+     {
+      "compensationType": "Salary",
+      "interval": "1 YEAR",
+      "currencyCode": "USD",
+      "minValue": 211400,
+      "maxValue": 290600
+     },
+     {
+      "compensationType": "EquityPercentage",
+      "interval": "NONE",
+      "currencyCode": null,
+      "minValue": null,
+      "maxValue": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "6b8f241c-a5e4-407a-baab-37aa7cb84d77",
+   "title": "Money Laundering Reporting Officer, Canada",
+   "department": "Compliance",
+   "team": "Compliance Strategy",
+   "employmentType": "FullTime",
+   "location": "Remote (Canada)",
+   "shouldDisplayCompensationOnJobPostings": true,
+   "secondaryLocations": [],
+   "publishedAt": "2026-10-26T16:41:13.554+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Remote",
+   "address": {
+    "postalAddress": {
+     "addressCountry": "Canada"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/ramp/6b8f241c-a5e4-407a-baab-37aa7cb84d77",
+   "applyUrl": "https://jobs.ashbyhq.com/ramp/6b8f241c-a5e4-407a-baab-37aa7cb84d77/application",
+   "descriptionHtml": "<h1><strong>About Ramp</strong></h1><p style=\"min-height:1.5em\">Ramp is building the smart infrastructure for finance teams, embedded in the transaction flow of every dollar a business spends. We automate how over $275B in annualized spend flows in and out of 85,000+ companies: authorizing payments, flagging risk, categorizing spend, and closing books.</p><p style=\"min-height:1.5em\">The problems a",
+   "descriptionPlain": "ABOUT RAMP\n\nRamp is building the smart infrastructure for finance teams, embedded in the transaction flow of every dollar a business spends. We automate how over $275B in annualized spend flows in and out of 85,000+ companies: authorizing payments, flagging risk, categorizing spend, and closing books.\n\nThe problems are high-stakes, data-dense, and unforgiving.\n\nWe hire people with high agency and ",
+   "compensation": {
+    "compensationTierSummary": "CA$230K \u2013 CA$315K \u2022 Offers Equity",
+    "scrapeableCompensationSalarySummary": "CA$230K - CA$315K",
+    "compensationTiers": [
+     {
+      "id": "97106ef8-4da8-4b38-90dd-8a3c157862fa",
+      "tierSummary": "Target Base Salary CA$230K \u2013 CA$315K \u2022 Offers Equity",
+      "title": "Canada",
+      "additionalInformation": null,
+      "components": [
+       {
+        "id": "125af6ef-0af2-4d8a-ae0e-9807bc8ceb81",
+        "summary": "Target Base Salary CA$230K \u2013 CA$315K",
+        "compensationType": "Salary",
+        "interval": "1 YEAR",
+        "currencyCode": "CAD",
+        "minValue": 230000,
+        "maxValue": 315000
+       },
+       {
+        "id": "84e060ef-c41a-428e-8b62-eca58eb7818e",
+        "summary": "Offers Equity",
+        "compensationType": "EquityCashValue",
+        "interval": "1 YEAR",
+        "currencyCode": "CAD",
+        "minValue": null,
+        "maxValue": null
+       }
+      ]
+     }
+    ],
+    "summaryComponents": [
+     {
+      "compensationType": "Salary",
+      "interval": "1 YEAR",
+      "currencyCode": "CAD",
+      "minValue": 230000,
+      "maxValue": 315000
+     },
+     {
+      "compensationType": "EquityCashValue",
+      "interval": "1 YEAR",
+      "currencyCode": "CAD",
+      "minValue": null,
+      "maxValue": null
+     }
+    ]
+   }
+  }
+ ]
+}

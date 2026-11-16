@@ -21,13 +21,14 @@ test('job links preserve query parameters, remove duplicates, and reject invalid
 
 function dashboard() {
   const elements = new Map();
-  const node = () => ({value:'',textContent:'',hidden:false,disabled:false,children:[],events:{},
+  const node = () => ({value:'',textContent:'',hidden:false,disabled:false,children:[],events:{},dataset:{},title:'',
+    classList:{add(){},remove(){},contains(){return false;},toggle(){}},setAttribute(){},removeAttribute(){},querySelector(){return null;},querySelectorAll(){return [];},
     addEventListener(name, callback) {this.events[name] = callback;},
     append(...items) {this.children.push(...items);},
     replaceChildren(...items) {this.children = items;},
   });
   const element = id => {if (!elements.has(id)) elements.set(id, node());return elements.get(id);};
-  const context = {window:{App:{ProfileWorkflow:workflow}},document:{getElementById:element,createElement:node}};
+  const context = {window:{App:{ProfileWorkflow:workflow}},document:{getElementById:element,createElement:node},confirm:() => true,setTimeout};
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../src/renderer/extension-workspace'), 'utf8'), context);
   return {element, api:context.window.App.ExtensionWorkspace};
@@ -36,8 +37,9 @@ function dashboard() {
 test('extension dashboard has eight unlinked slots and isolates profile job lists', async () => {
   const d = dashboard(), writes = [];
   d.api.open({id:'one',firstName:'One',extensionJobLinks:[]}, async links => writes.push(links));
-  assert.equal(d.element('extension-slots').children.length, 8);
-  assert.equal(d.element('extension-connected-count').textContent, '0 / 8');
+  assert.equal(d.element('extension-slots').children.length, 0, 'no placeholder slots before a browser is linked');
+  assert.equal(d.element('extension-connected-count').textContent, '0');
+  assert.equal(d.element('extension-slots-empty').hidden, false);
   d.element('extension-job-links').value = 'https://example.com/job';
   await d.element('extension-save-links').events.click();
   assert.deepEqual(writes, [['https://example.com/job']]);
@@ -73,4 +75,29 @@ test('late save completion cannot overwrite another profile dashboard', async ()
   assert.equal(d.element('extension-job-count').textContent, '0');
   assert.equal(d.element('extension-job-links').value, '');
   assert.equal(d.element('extension-links-status').textContent, '');
+});
+
+test('the link editor opens on request, cancels back to what was saved, and Clear removes links not open in Chrome', async () => {
+  const d = dashboard(), writes = [];
+  const profile = {id:'one',extensionJobLinks:['https://jobs.lever.co/acme/1','https://jobs.lever.co/acme/2']};
+  d.api.open(profile, async links => {writes.push(links);profile.extensionJobLinks = links;});
+  // Saved links: the jobs list shows them; the editor stays closed until asked for.
+  assert.equal(d.element('extension-links-editor').hidden, true);
+  assert.equal(d.element('extension-links-edit').textContent, '+ Add links');
+  await d.element('extension-links-edit').events.click();
+  assert.equal(d.element('extension-links-editor').hidden, false);
+  assert.equal(d.element('extension-links-edit').textContent, 'Close editor');
+  // Cancel puts back what was saved and closes the editor.
+  d.element('extension-job-links').value = 'https://typed.example/job';
+  d.element('extension-links-cancel').events.click();
+  assert.equal(d.element('extension-job-links').value, ['https://jobs.lever.co/acme/1','https://jobs.lever.co/acme/2'].join(String.fromCharCode(10)));
+  assert.equal(d.element('extension-links-editor').hidden, true);
+  // Clear removes every link not open in Chrome, then opens the editor for new ones.
+  await d.element('extension-links-clear').events.click();
+  assert.deepEqual(writes.at(-1), []);
+  assert.equal(d.element('extension-links-editor').hidden, false);
+  assert.match(d.element('extension-links-status').textContent, /Removed 2 links/);
+  // With no links, the profile opens straight into the editor.
+  const empty = dashboard();empty.api.open({id:'two'}, async () => {});
+  assert.equal(empty.element('extension-links-editor').hidden, false);
 });

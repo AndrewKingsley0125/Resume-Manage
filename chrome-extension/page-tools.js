@@ -1,5 +1,5 @@
 (() => {
-  const version=17;
+  const version=21;
   if (globalThis.ResumeApplyPage && globalThis.ResumeApplyPage.version===version) return;
   const text = el => (el ? el.innerText || el.textContent || '' : '').replace(/\s+/g, ' ').trim();
   const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
@@ -19,6 +19,24 @@
     [/deel\.com$/, 'deel', '[class*="richTextDisplay"]', 'h1', 'form'],
   ];
   const adapter = sites.find(([pattern]) => pattern.test(location.hostname)) || [null, 'generic', 'article, main', 'h1', 'form'];
+  // The user's own last click or key press. Everything the extension does is
+  // synthetic (isTrusted false), so this separates the user's Submit from a
+  // submit triggered by a dropdown the extension is operating.
+  if(!globalThis.ResumeApplyUserInput) {
+    const input=globalThis.ResumeApplyUserInput={at:0,target:null,key:''};
+    for(const type of ['pointerdown','mousedown','click','keydown'])document.addEventListener(type,event=>{
+      if(!event.isTrusted)return;
+      Object.assign(input,{at:Date.now(),target:event.target,key:type==='keydown'?event.key:''});
+    },true);
+  }
+  function userSubmit(event) {
+    const {at,target,key}=globalThis.ResumeApplyUserInput || {};
+    if(!target || Date.now()-at>1500)return false;
+    const submitter=event.submitter;
+    if(submitter && (submitter===target || submitter.contains(target)))return true;
+    // Enter in a field of this form (implicit submission), or Space/Enter on its button.
+    return ['Enter',' '].includes(key) && !!event.target?.contains?.(target);
+  }
   function htmlText(html) {
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
     doc.querySelectorAll('script,style,iframe').forEach(el => el.remove());
@@ -107,6 +125,14 @@
   let scanned = new Map(), scanUrl = '', scanId = '';
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const normalized=value=>String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  // Sites change the #hash or query while you work (tabs, "#" links, step state).
+  // That is the same document; a real navigation clears this script's scan anyway,
+  // and replaced controls are caught by isConnected.
+  const pageKey=url=>{try{const u=new URL(url);return u.origin+u.pathname;}catch(_){return String(url);}};
+  const samePage=()=>pageKey(location.href)===pageKey(scanUrl);
+  // Validation text ("This field is required") or a counter can be added to a
+  // label after interaction. A different question shares neither start nor text.
+  const sameQuestion=(now,before)=>{const a=normalized(now),b=normalized(before);return a===b || !!b && (a.startsWith(b) || a.endsWith(b));};
   const comboInput=el=>el.matches('input,textarea')?el:el.querySelector('input:not([type="hidden"]),textarea');
   // Oracle Candidate Experience exposes dropdown choices as a grid of cells,
   // not listbox options. Restrict grid support to its selection-menu markup.
@@ -193,7 +219,8 @@
     for(const tier of tiers) {
       const hits=named.filter(tier).map(item=>item.label);
       if(hits.length===1)return {match:hits[0]};
-      if(hits.length>1)return {candidates:hits};
+      // Several options all fit the answer: a real choice, not a weak guess.
+      if(hits.length>1)return {candidates:hits,close:true};
     }
     // Nothing fits outright: anything left is only a suggestion for ChatGPT to confirm.
     const overlap=item=>words.filter(word=>item.text.split(' ').includes(word)).length;
@@ -214,18 +241,30 @@
   async function searchesServer(input,watch) {
     watch.seen.length=0;
     setValue(input,'qzx');
-    const found=await waitFor(()=>watch.seen.length>0 || null,1200);
+    const found=await waitFor(()=>watch.seen.length>0 || null,800);
     setValue(input,'');
     // Let the follow-up request finish so it isn't credited to the next dropdown.
-    await pause(found?500:120);
+    await pause(found?300:60);
     return !!found;
   }
+  // Site searches match the typed text literally: "University of California,
+  // Berkeley" finds nothing where the option reads "University of California -
+  // Berkeley". So also try the site's other separator and the distinctive part
+  // after a comma ("Berkeley") before dropping words from the start.
   function narrowingQueries(value) {
-    const first=value.split(',')[0].trim(),queries=[value,first];
+    const plain=String(value).replace(/\s*\([^)]*\)/g,'').replace(/\s+/g,' ').trim() || String(value);
+    const parts=plain.split(/\s*,\s*/).filter(Boolean),first=parts[0] || plain;
+    const queries=[value,plain];
+    if(parts.length>1) {
+      queries.push(parts.join(' - '));
+      // A short tail is a state or country code ("San Francisco, CA"), which finds unrelated places.
+      for(const part of parts.slice(1))if(part.replace(/[^\p{L}]/gu,'').length>=4)queries.push(part);
+    }
+    queries.push(first);
     let words=first.split(/\s+/);
-    while(words.length>1 && queries.length<5) {
+    for(let added=0;words.length>1 && added<3;) {
       words=words.slice(0,-1);
-      if(words.join(' ').length>=3)queries.push(words.join(' '));
+      if(words.join(' ').length>=3){queries.push(words.join(' '));added++;}
     }
     return [...new Set(queries)].filter(Boolean);
   }
@@ -324,24 +363,47 @@
       const hint=(field.inputHints?.placeholder || '').trim();
       if(sameLabel.get(field.label)>1 && hint && hint.toLowerCase()!==field.label.toLowerCase())field.label=`${field.label} - ${hint}`;
     }
-    return {scanId,url:scanUrl,adapter:adapter[1],fields};
+    return {scanId,url:scanUrl,adapter:adapter[1],site:adapter[1]!=='generic'?adapter[1]:location.hostname.replace(/^www\./,''),fields};
   }
   function setValue(el, value) {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));
   }
+  // The value React holds for a controlled field, read by page-main.js in the
+  // page's own world. undefined when the field is not React-controlled (or the
+  // helper is absent): then only what the page shows can be checked.
+  function reactValue(el) {
+    const attr='data-resume-apply-react';
+    el.removeAttribute(attr);
+    el.dispatchEvent(new CustomEvent('resume-apply-react-value'));
+    const raw=el.getAttribute(attr);el.removeAttribute(attr);
+    try {return raw?JSON.parse(raw).value:undefined;}catch(_){return undefined;}
+  }
+  // Types the way the browser does: execCommand fires trusted beforeinput and
+  // input events, which components that ignore synthetic input still handle.
+  // Only into the field itself; if focus went elsewhere, nothing is typed.
+  function typeInto(el,value) {
+    focusControl(el);
+    if(document.activeElement!==el)return false;
+    try{el.select();}catch(_){ /* not selectable */ }
+    const typed=value?document.execCommand('insertText',false,value):document.execCommand('delete');
+    blurControl(el);
+    return typed;
+  }
   async function discoverOptions(ids) {
-    if(location.href!==scanUrl || !scanId)throw new Error('The application page changed. Scan questions again before requesting answers.');
+    if(!samePage() || !scanId)throw new Error('The application page changed. Scan questions again before requesting answers.');
     const entries=ids?ids.map(id=>scanned.get(id)):[...scanned.values()];
     if(entries.some(entry=>!entry))throw new Error('The question scan was cleared. Scan questions again.');
     const currentScan=scanId;
     for(const entry of entries) {
       const {el,field,members}=entry;
-      const ensure=()=>{if(scanId!==currentScan || location.href!==scanUrl || !el.isConnected || label(el)!==entry.label && !['radio','checkbox'].includes(field.type))throw new Error('An application question changed. Scan questions again.');};
+      const ensure=()=>{if(scanId!==currentScan || !samePage() || !el.isConnected || !sameQuestion(label(el),entry.label) && !['radio','checkbox'].includes(field.type))throw new Error('An application question changed. Scan questions again.');};
       ensure();
       if(field.manualOnly)continue;
       if(field.fillMode==='local')continue;
+      // Already read during this scan (an earlier Ask or the automatic retry).
+      if(entry.discovered)continue;
       if(field.type==='select' || field.type==='multiselect') {
         field.options=[...el.options].filter(option=>option.value && !option.disabled && !option.closest('optgroup')?.disabled).map(text);
         field.optionsStatus=field.options.length?'complete':'unavailable';continue;
@@ -353,7 +415,7 @@
       if(field.type!=='combobox' || field.answerFormat==='text')continue;
       const input=comboInput(el),trigger=input || el.querySelector('button[aria-haspopup="listbox"],button[aria-expanded]') || el;
       const labels=new Set(),positions=new Map();let complete=true,attemptedSubmit=false;
-      const preventSubmit=event=>{attemptedSubmit=true;event.preventDefault();event.stopImmediatePropagation();};
+      const preventSubmit=event=>{if(userSubmit(event))return;attemptedSubmit=true;event.preventDefault();event.stopImmediatePropagation();};
       document.addEventListener('submit',preventSubmit,true);
       const watch=watchRequests();
       try {
@@ -410,7 +472,7 @@
         const tooLong=labels.size>LONG_LIST && single;
         const fromServer=editable && single && !!labels.size && (loadedOnOpen || tooLong || await searchesServer(input,watch));
         if((!labels.size || tooLong || fromServer) && editable){entry.fullOptions=[...labels];field.options=[];field.answerFormat='text';field.fillMode='search';field.optionsStatus='not-applicable';}
-        delete field.optionsError;
+        delete field.optionsError;entry.discovered=true;
       }catch(error){
         ensure();field.options=[...labels];field.optionsStatus=labels.size?'partial':'unavailable';field.optionsError=error.message;
       }finally{
@@ -427,7 +489,7 @@
     const multiple=field.answerFormat==='multiple',answers=[...new Set([].concat(answer))];
     if(!multiple && answers.length!==1)throw new Error('Choose one dropdown option.');
     let attemptedSubmit=false;
-    const preventSubmit=event=>{attemptedSubmit=true;event.preventDefault();event.stopImmediatePropagation();};
+    const preventSubmit=event=>{if(userSubmit(event))return;attemptedSubmit=true;event.preventDefault();event.stopImmediatePropagation();};
     document.addEventListener('submit',preventSubmit,true);
     const check=()=>{ensure();if(attemptedSubmit)throw new Error('The custom control tried to submit the form. Complete it manually.');};
     const click=node=>{
@@ -519,7 +581,7 @@
         // Results arrive from the site: wait until the list stops changing.
         const results=async()=>{
           await pause(300);
-          const until=Date.now()+8000;let last=null,since=Date.now();
+          const until=Date.now()+5000;let last=null,since=Date.now();
           while(Date.now()<until) {
             check();
             const shown=options().filter(visible).map(text),signature=shown.join('|');
@@ -531,22 +593,28 @@
           }
           return options().filter(visible).map(text);
         };
-        // Type the full answer, then shorter forms until the site shows something.
-        let suggestion=null,candidates=[],query='';
-        for(const value of item.searchText?[item.searchText]:narrowingQueries(typed)) {
+        // Type the full answer, then other forms until the site shows the answer.
+        // Results that only share a word with it ("Master of" shows only the
+        // M.B.A.) may be hiding the right one, so keep searching; several
+        // options that all fit are a real choice and go to ChatGPT as they are.
+        let suggestion=null,candidates=[],query='',close=false;
+        const queries=[...new Set([...(item.searchText?[item.searchText]:[]),...narrowingQueries(typed)])];
+        for(const value of queries) {
           setValue(input,value);
           const shown=await results();
           if(!shown.length)continue;
-          query=value;
           const found=closestOption(shown,typed,field);
-          if(found.match){suggestion=options().filter(visible).find(option=>text(option)===found.match);break;}
-          candidates=found.candidates.length?found.candidates:shown;
-          break;
+          if(found.match){query=value;suggestion=options().filter(visible).find(option=>text(option)===found.match);break;}
+          if(!query)query=value;
+          candidates=[...new Set([...candidates,...(found.candidates.length?found.candidates:shown)])];
+          if(found.close){close=true;break;}
         }
         if(!suggestion) {
           setValue(input,'');dismissCombo(el);
-          // The site's search found nothing, but the list read earlier may still hold it.
-          if(!candidates.length && entry.fullOptions?.length)candidates=closestOption(entry.fullOptions,typed,field).candidates || [];
+          // The list read when the dropdown opened may hold choices the site's search never showed.
+          const listed=entry.fullOptions?.length?closestOption(entry.fullOptions,typed,field):null;
+          if(listed?.match)candidates=[...new Set([listed.match,...candidates])];
+          else if(listed && !close)candidates=[...new Set([...candidates,...listed.candidates])];
           throw choiceError(candidates.length?'Several results could match. Choose it manually.':'The site found no results for this answer. Choose it manually.',candidates,query);
         }
         click(suggestion);
@@ -633,15 +701,42 @@
     });
     return !!String(el.value || '').trim();
   }
+  // What the control shows now, in the site's own wording: the chosen option's
+  // text rather than the answer that was typed to find it. Null when empty.
+  function currentValue(entry) {
+    if(!entry || !entry.el.isConnected)return null;
+    const {el,members,field}=entry;
+    let value;
+    if(field.type==='file' || field.type==='password')return null;
+    if(field.type==='radio' || field.type==='checkbox') {
+      const chosen=members.map((member,index)=>(member.checked===true || member.getAttribute('aria-checked')==='true' || member.getAttribute('aria-pressed')==='true')?field.options[index]:null).filter(Boolean);
+      value=field.type==='checkbox' && members.length===1?(chosen.length?chosen:null):field.type==='radio'?chosen[0]:chosen;
+    } else if(field.type==='select' || field.type==='multiselect') {
+      const chosen=[...el.selectedOptions].filter(option=>option.value && !option.disabled).map(text);
+      value=field.type==='multiselect'?chosen:chosen[0];
+    } else if(field.type==='combobox') {
+      const input=comboInput(el);
+      if(field.answerFormat==='multiple') {
+        const labels=multiValues(el);
+        value=labels.length?labels:listOptions(observedLists.get(el) || []).filter(option=>option.getAttribute('aria-selected')==='true').map(text);
+      } else value=singleValue(el) || input?.value || (!input && el.getAttribute('data-value')) || '';
+    } else value=el.value;
+    if(Array.isArray(value))return value.length?value:null;
+    return String(value ?? '').trim() || null;
+  }
+  function values() {
+    if(!samePage())throw new Error('The application page changed.');
+    return {scanId,values:[...scanned].map(([id,entry])=>({id,value:currentValue(entry)}))};
+  }
   async function fillOne(item) {
       const entry = scanned.get(item.id);
       if (!entry || item.scanId !== scanId || !entry.el.isConnected || entry.field.manualOnly) throw new Error('Field changed or requires manual input. Rescan.');
       const {el,members,field} = entry;
       // Earlier answers can come from a previous scan that already read this control.
       for(const name of ['answerFormat','fillMode'])if(item[name]!==undefined)field[name]=item[name];
-        if (!['radio','checkbox'].includes(field.type) && label(el) !== entry.label) throw new Error('Question changed. Rescan.');
+        if (!['radio','checkbox'].includes(field.type) && !sameQuestion(label(el),entry.label)) throw new Error('Question changed. Rescan.');
         if(field.type==='combobox') {
-          await fillCombo(entry,item.answer,()=>{if(location.href!==scanUrl || item.scanId!==scanId || !el.isConnected)throw new Error('The application field changed. Rescan before filling.');},item);
+          await fillCombo(entry,item.answer,()=>{if(!samePage() || item.scanId!==scanId || !el.isConnected)throw new Error('The application field changed. Rescan before filling.');},item);
         } else if(field.type==='file') {
           if(!field.resumeUpload || !item.file || item.file.name!=='resume.docx')throw new Error('Only the generated resume.docx can be uploaded here.');
           const mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -674,13 +769,25 @@
         } else {
           focusControl(el);setValue(el,String(item.answer));blurControl(el);
           // Input masks restyle values such as phone numbers; losing the content is the failure.
-          const compact=value=>String(value).toLowerCase().replace(/[^a-z0-9]/g,'');
-          const kept=compact(el.value),wanted=compact(item.answer);
-          if(wanted && (!kept || !kept.includes(wanted) && !wanted.includes(kept)))throw new Error('Site reformatted or rejected the value. Check manually.');
+          const compact=value=>String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g,'');
+          const wanted=compact(item.answer);
+          const holds=value=>{const kept=compact(value);return !wanted || !!kept && (kept.includes(wanted) || wanted.includes(kept));};
+          if(!holds(el.value))throw new Error('Site reformatted or rejected the value. Check manually.');
+          // A React field can show the text while its state never changed (it ignored
+          // the synthetic events). Compare React's own value once it has re-rendered;
+          // if it missed the answer, type it again as real keystrokes would.
+          if(wanted && reactValue(el)!==undefined) {
+            const registered=async()=>{await pause(50);const held=reactValue(el);return held===undefined || holds(held);};
+            if(!await registered()) {
+              const notTaken=new Error('The page shows this answer but the site did not register it. Retype it manually.');
+              if(!typeInto(el,String(item.answer)))throw notTaken;
+              if(!holds(el.value) || !await registered())throw notTaken;
+            }
+          }
         }
   }
   async function fill(items) {
-    if (location.href !== scanUrl) throw new Error('The application page changed. Scan and review again.');
+    if (!samePage()) throw new Error('The application page changed. Scan and review again.');
     const errors=new Map();
     const attempt=async item=>{try{await fillOne(item);errors.delete(item);}catch(error){errors.set(item,error);}};
     for(const item of items)await attempt(item);
@@ -688,15 +795,18 @@
     for(const item of items) {
       const failed=errors.get(item);
       // Search results that need a decision go back to ChatGPT rather than being retried.
-      if(item.file || location.href!==scanUrl || failed?.candidates || /submit/i.test(failed?.message || ''))continue;
-      if(!failed && fieldHolds(scanned.get(item.id),item))continue;
+      if(item.file || !samePage() || failed?.candidates || /submit/i.test(failed?.message || ''))continue;
+      // Dropdowns already confirm their own selection; refilling one only repeats the slow path.
+      if(!failed && (scanned.get(item.id)?.field.type==='combobox' || fieldHolds(scanned.get(item.id),item)))continue;
       await attempt(item);
       await pause(200);
       if(!errors.has(item) && !fieldHolds(scanned.get(item.id),item))errors.set(item,new Error('The site cleared this answer. Check it manually.'));
     }
     return items.map(item=>{
       const failed=errors.get(item);
-      return failed?{id:item.id,error:failed.message,...(failed.candidates?.length?{candidates:failed.candidates,query:failed.query}:{})}:{id:item.id,filled:true};
+      if(failed)return {id:item.id,error:failed.message,...(failed.candidates?.length?{candidates:failed.candidates,query:failed.query}:{})};
+      const shown=item.file?null:currentValue(scanned.get(item.id));
+      return {id:item.id,filled:true,...(shown!=null?{value:shown}:{})};
     });
   }
   // Attaching a file only starts the upload. Wait for the site to finish it.
@@ -747,12 +857,31 @@
     return new Promise(resolve => {
       let quiet, observer;
       const finish = () => {clearTimeout(quiet);clearTimeout(limit);observer.disconnect();resolve(true);};
-      const schedule = () => {clearTimeout(quiet);quiet = setTimeout(finish,1000);};
+      const schedule = () => {clearTimeout(quiet);quiet = setTimeout(finish,700);};
       observer = new MutationObserver(schedule);
-      observer.observe(document.body,{childList:true,subtree:true,characterData:true});
-      const limit = setTimeout(() => {clearTimeout(quiet);observer.disconnect();resolve(false);},12000);
+      // Text-only changes (clocks, counters, animations) never settle and do not change the form.
+      observer.observe(document.body,{childList:true,subtree:true});
+      const limit = setTimeout(() => {clearTimeout(quiet);observer.disconnect();resolve(false);},8000);
       schedule();
     });
   }
-  globalThis.ResumeApplyPage = {version,job, scan, fill, settled,discoverOptions,blocker,clickNext,uploadFinished};
+  // When the user submits, report the form's final values, their own
+  // corrections included, so they are saved for this site. Only real clicks
+  // count; the extension itself never submits.
+  let lastReport=0;
+  function reportValues() {
+    if(!scanId || !samePage() || Date.now()-lastReport<2000)return;
+    lastReport=Date.now();
+    try {chrome.runtime.sendMessage({event:'page-submitting',scanId,values:[...scanned].map(([id,entry])=>({id,value:currentValue(entry)}))}).catch(()=>{});}catch(_){ /* extension reloaded */ }
+  }
+  globalThis.ResumeApplyReport=reportValues;
+  if(!globalThis.ResumeApplySubmitWatch) {
+    globalThis.ResumeApplySubmitWatch=true;
+    document.addEventListener('submit',event=>{if(event.isTrusted)globalThis.ResumeApplyReport?.();},true);
+    document.addEventListener('click',event=>{
+      const button=event.isTrusted && event.target?.closest?.('button,input[type="submit"],[role="button"]');
+      if(button && /\b(?:submit|send application|apply|finish)\b/i.test(text(button) || button.value || ''))globalThis.ResumeApplyReport?.();
+    },true);
+  }
+  globalThis.ResumeApplyPage = {version,job, scan, fill, values, settled,discoverOptions,blocker,clickNext,uploadFinished};
 })();

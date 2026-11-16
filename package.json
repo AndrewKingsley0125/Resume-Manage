@@ -1,7 +1,7 @@
 {
   "name": "resume-manage",
   "productName": "Resume Manager",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Electron-based resume manager with multi-profile support",
   "main": "src/main/main.js",
   "author": "Resume Manager",
@@ -12,7 +12,13 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist:portable": "electron-builder --win portable",
+    "build:css": "tailwindcss -c tailwind.app.config.js -i src/renderer/tailwind.src.css -o src/renderer/tailwind.css --minify && tailwindcss -c tailwind.extension.config.js -i chrome-extension/tailwind.src.css -o chrome-extension/tailwind.css --minify",
+    "prestart": "npm run build:css",
+    "prepack": "npm run build:css",
+    "predist": "npm run build:css",
+    "predist:win": "npm run build:css",
+    "predist:portable": "npm run build:css"
   },
   "keywords": [
     "electron",
@@ -21,7 +27,8 @@
   ],
   "devDependencies": {
     "electron": "^42.3.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "tailwindcss": "^3.4.19"
   },
   "build": {
     "appId": "com.resumemanage.app",
@@ -35,11 +42,18 @@
       "package.json",
       "!**/*.{md,log,map,test.js}",
       "!**/{.git,.github,test,tests,docs,examples}/**",
-      "!**/{.DS_Store,Thumbs.db,.gitignore,.gitattributes,.editorconfig}"
+      "!**/{.DS_Store,Thumbs.db,.gitignore,.gitattributes,.editorconfig}",
+      "!src/renderer/tailwind.src.css"
     ],
     "asar": true,
+    "asarUnpack": [
+      "src/discovery/**"
+    ],
     "extraResources": [
-      { "from": "src/prompts/resume-new.md", "to": "resume-new.md" }
+      {
+        "from": "src/prompts/resume-new.md",
+        "to": "resume-new.md"
+      }
     ],
     "win": {
       "target": [

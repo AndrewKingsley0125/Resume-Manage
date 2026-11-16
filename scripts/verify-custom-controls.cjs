@@ -43,6 +43,10 @@ app.whenReady().then(async()=>{
       search('city','City search',query=>query.length<3?[]:places.filter(place=>place.toLowerCase().startsWith(query)));
       search('town','Town search',query=>query.startsWith('san francisco, ca')?[]:places.filter(place=>place.toLowerCase().startsWith(query)));
       search('none','Nothing found',()=>[]);
+      // Greenhouse's school and degree searches match the typed text literally (lists from its public API).
+      const literal=list=>query=>query?list.filter(item=>item.toLowerCase().includes(query)):[];
+      search('ghschool','Greenhouse school',literal(['Dominican University of California','University of California - Berkeley','University of California - Davis','University of California, Merced','Berkeley College']));
+      search('ghdegree','Greenhouse degree',literal(["Associate's Degree","Bachelor's Degree","Master of Business Administration (M.B.A.)","Master's Degree","Other"]));
       const school=document.createElement('input');school.id='school';school.setAttribute('role','combobox');school.setAttribute('aria-label','School');school.setAttribute('aria-controls','school-list');document.querySelector('form').append(school);
       const schools=document.createElement('div');schools.id='school-list';schools.setAttribute('role','listbox');schools.hidden=true;document.querySelector('form').append(schools);for(let index=0;index<100;index++)option(schools,'School '+index,false,()=>{});school.onclick=()=>{schools.hidden=false;};
       const lands=['United States +1','United States Minor Outlying Islands +1','United Arab Emirates +971','Canada +1'];for(let index=0;index<30;index++)lands.push('Land '+index+' +'+index);
@@ -59,8 +63,14 @@ app.whenReady().then(async()=>{
       let clears=0;const once=text('once','Cleared once');once.onchange=()=>{if(!clears++)setTimeout(()=>{once.value='';},50);};
       const always=text('always','Always cleared');always.onchange=()=>setTimeout(()=>{always.value='';},50);
       const focusBox=text('focus-box','Needs focus');focusBox.addEventListener('focusin',()=>{focusSeen++;});focusBox.addEventListener('focusout',()=>{blurSeen++;});
+      // React-style controlled fields: React's value lives in __reactProps$, apart from what the box shows.
+      const react=(id,name,update)=>{const box=text(id,name);box.__reactProps$fixture={value:''};box.addEventListener('input',event=>{if(update(event))box.__reactProps$fixture={value:box.value};});return box;};
+      react('react-ok','React controlled',()=>true);
+      react('react-keys','React keystrokes only',event=>event.isTrusted);
+      react('react-never','React never registers',()=>false);
       const mask=text('mask','Masked phone');mask.oninput=()=>{const digits=mask.value.replace(/\\D/g,'');if(digits.length===10)mask.value='('+digits.slice(0,3)+') '+digits.slice(3,6)+'-'+digits.slice(6);};
     })()`);
+    await win.webContents.executeJavaScript(fs.readFileSync(path.join(__dirname,'../chrome-extension/page-main.js'),'utf8'));
     await win.webContents.executeJavaScript(fs.readFileSync(path.join(__dirname,'../chrome-extension/page-tools.js'),'utf8'));
     let scan=await win.webContents.executeJavaScript('ResumeApplyPage.scan()');
     const originalIds=scan.fields.map(field=>field.id);
@@ -134,6 +144,15 @@ app.whenReady().then(async()=>{
     assert.equal(shortened.query,'San Francisco');assert.equal(shortened.candidates.length,2);
     const nothing=await fill('Nothing found','Anything');
     assert.match(nothing.error,/no results/);assert.equal(nothing.candidates,undefined);
+    const school=await fill('Greenhouse school','University of California, Berkeley');
+    assert.equal(school.filled,true,JSON.stringify(school));assert.equal(school.value,'University of California - Berkeley');
+    const shown=await win.webContents.executeJavaScript('ResumeApplyPage.values()');
+    assert.equal(shown.values.find(item=>item.id===field('Greenhouse school').id).value,'University of California - Berkeley');
+    const degree=await fill('Greenhouse degree','Master of Science');
+    assert.equal(degree.filled,undefined);assert.ok(degree.candidates.includes("Master's Degree"),JSON.stringify(degree));
+    const pickedDegree=(await win.webContents.executeJavaScript(`ResumeApplyPage.fill(${JSON.stringify([{id:field('Greenhouse degree').id,scanId:scan.scanId,answer:"Master's Degree",searchText:degree.query}])})`))[0];
+    assert.equal(pickedDegree.filled,true,JSON.stringify(pickedDegree));assert.equal(pickedDegree.value,"Master's Degree");
+    console.log('PASS: literal site searches find "University of California - Berkeley" from a comma answer, and keep searching past results that only share a word.');
     console.log('PASS: type-to-load dropdowns return the real results for ChatGPT to choose from, then select the chosen one.');
     const batch=await win.webContents.executeJavaScript(`ResumeApplyPage.fill(${JSON.stringify([['Country','Atlantis'],['Cleared once','Kept'],['Always cleared','Lost'],['Needs focus','Seen'],['Masked phone','5551234567']].map(([label,answer])=>({id:field(label).id,scanId:scan.scanId,answer})))})`);
     assert.match(batch[0].error,/No matching/);
@@ -142,6 +161,14 @@ app.whenReady().then(async()=>{
     assert.equal(batch[3].filled,true);assert.ok(await win.webContents.executeJavaScript('focusSeen>0 && blurSeen>0'));
     assert.equal(batch[4].filled,true);assert.equal(await win.webContents.executeJavaScript('document.querySelector("#mask").value'),'(555) 123-4567');
     console.log('PASS: one failed field does not stop the batch, cleared answers are retried, focus reaches unfocused pages, and input masks are accepted.');
+    const reactProps=id=>win.webContents.executeJavaScript(`document.querySelector('#${id}').__reactProps$fixture.value`);
+    const reactOk=await fill('React controlled','Jane');
+    assert.equal(reactOk.filled,true,JSON.stringify(reactOk));assert.equal(await reactProps('react-ok'),'Jane');
+    const reactKeys=await fill('React keystrokes only','Seattle, WA');
+    assert.equal(reactKeys.filled,true,JSON.stringify(reactKeys));assert.equal(await reactProps('react-keys'),'Seattle, WA');
+    assert.equal(await win.webContents.executeJavaScript(`document.querySelector('#react-keys').value`),'Seattle, WA');
+    assert.match((await fill('React never registers','Anything')).error,/did not register/);
+    console.log('PASS: a React field that shows the text but missed it is retyped with real input events; one that never takes it is reported.');
     assert.equal(await win.webContents.executeJavaScript('submitted'),false);
     const page=code=>win.webContents.executeJavaScript(code);
     assert.equal(await page(`document.body.innerHTML='<iframe src="https://www.google.com/recaptcha/api2/anchor?size=invisible" style="width:300px;height:80px"></iframe><p>Thanks</p>';ResumeApplyPage.blocker()`),null);

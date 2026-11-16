@@ -8,7 +8,9 @@ const Resume = require('../shared/resume');
 const { buildPrompt } = require('./prompt');
 const { createExtensionBridge } = require('./extension-bridge');
 const { renderExtensionResume } = require('./extension-render');
+const { createDiscovery, registerDiscoveryIpc } = require('./discovery');
 let extensionBridge = null;
+let discovery = null;
 
 const PROFILES_FILE = 'profiles.json';
 const RESUMES_DIR = 'resumes';
@@ -1303,10 +1305,17 @@ app.whenReady().then(async () => {
     },
   });
   await extensionBridge.start();
-  ipcMain.handle('extension:state', () => extensionBridge.dashboard());
-  ipcMain.handle('extension:rotateCode', () => extensionBridge.rotateCode());
+  // Job discovery runs in its own worker thread with its own database file.
+  discovery = createDiscovery({
+    dbPath: path.join(app.getPath('userData'), 'discovery.db'),
+    onEvent: event => {for (const win of BrowserWindow.getAllWindows()) win.webContents.send('discovery:event', event);},
+  });
+  registerDiscoveryIpc(ipcMain, {discovery, readProfiles, readResume, openExternal: url => shell.openExternal(url)});
+  ipcMain.handle('extension:state', (_event, profileId) => extensionBridge.dashboard(typeof profileId === 'string' ? profileId : undefined));
+  ipcMain.handle('extension:rotateCode', (_event, profileId) => extensionBridge.rotateCode(typeof profileId === 'string' ? profileId : undefined));
   ipcMain.handle('extension:unlink', (_event, id) => extensionBridge.unlink(id));
   ipcMain.handle('extension:assign', (_event, args) => extensionBridge.assign(args.profileId, args.url, args.connectionId, args.style));
+  ipcMain.handle('extension:command', (_event, args) => extensionBridge.command(args.profileId, args.jobId, args.action));
 
   ipcMain.handle('prompt:generate', (_event, profileId) => {
     const profile = readProfiles().find(p => p.id === profileId);
@@ -1427,4 +1436,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { if (extensionBridge) extensionBridge.stop(); });
+app.on('before-quit', () => {
+  if (extensionBridge) extensionBridge.stop();
+  if (discovery) discovery.close().catch(() => {});
+});

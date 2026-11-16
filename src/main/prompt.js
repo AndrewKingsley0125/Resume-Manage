@@ -12,19 +12,26 @@ function renderPrompt(template, profile) {
   if (!template.includes(placeholder)) {
     throw new Error(`resume-new.md must contain a ${placeholder} placeholder`);
   }
+  // Same layout as the prompt's original sample profile, filled from the selected profile:
+  //   - Company — Title, Location, Work type, Arrangement, Period
+  //   - Degree, Institution, Period
   const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
-  const work = (profile.workHistory || []).map(w =>
-    '- ' + [w.company, w.title, w.location, w.workType, w.workArrangement, w.period].filter(Boolean).join(', ')
-  );
+  const work = (profile.workHistory || []).map(w => {
+    const details = [w.title, w.location, w.workType, w.workArrangement, w.period].filter(Boolean).join(', ');
+    return '- ' + [w.company, details].filter(Boolean).join(' — ');
+  });
   const education = (profile.education || []).map(e =>
-    '- ' + [e.degree, [e.institution, e.period].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+    '- ' + [e.degree, e.institution, e.period].filter(Boolean).join(', ')
   );
+  const header = [
+    ...(name ? [`**Name:** ${name}`] : []),
+    ...(profile.location ? [`**Location:** ${profile.location}`] : []),
+  ];
   const candidate = [
-    ...(name ? [`Name: ${name}`, ''] : []),
-    ...(profile.location ? [`Location: ${profile.location}`, ''] : []),
-    `Default target level: ${profile.title || ''}`,
-    '', 'Work Experience:', ...work,
-    '', 'Education:', ...education,
+    // Two trailing spaces keep Name and Location on separate lines in Markdown.
+    ...(header.length ? [header.join('  ' + newline), ''] : []),
+    '**Professional Experience**', ...work,
+    '', '**Education**', ...education,
   ].join(newline);
   return template.replace(placeholder, () => candidate);
 }

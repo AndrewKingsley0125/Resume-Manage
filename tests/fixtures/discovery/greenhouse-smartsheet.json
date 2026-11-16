@@ -1,0 +1,196 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/smartsheet/jobs/8232492",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 3562440,
+   "location": {
+    "name": "Bangalore, INDIA"
+   },
+   "metadata": [
+    {
+     "id": 2870472,
+     "name": "Working Location",
+     "value": null,
+     "value_type": "single_select"
+    },
+    {
+     "id": 8784352,
+     "name": "Job Profile Code",
+     "value": null,
+     "value_type": "short_text"
+    }
+   ],
+   "id": 8232492,
+   "updated_at": "2026-11-09T17:31:12-05:00",
+   "requisition_id": null,
+   "title": "AI ML Ops Software Engineer (Bangalore Hybrid)",
+   "company_name": "Smartsheet",
+   "first_published": "2026-09-25T01:21:14-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;For over 20 years, Smartsheet has empowered teams to manage work seamlessly and scale solutions smarter. Now, in our most ambitious chapter yet, we are uniting human teams with AI agents. By orchestrating the work agents do best, automating manual tasks and uncovering insights at scale, we create the space for people to focus on what truly matter",
+   "departments": [
+    {
+     "id": 74280,
+     "name": "Platform",
+     "child_ids": [],
+     "parent_id": 43784
+    }
+   ],
+   "offices": [
+    {
+     "id": 230690,
+     "name": "India",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse\u2019s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app.greenhouse.io/ai_opt_out_request/job_post/8232492/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/smartsheet/jobs/8238594",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "education": "education_optional",
+   "internal_job_id": 3564954,
+   "location": {
+    "name": "Bellevue, WA, USA"
+   },
+   "metadata": [
+    {
+     "id": 2870472,
+     "name": "Working Location",
+     "value": null,
+     "value_type": "single_select"
+    },
+    {
+     "id": 8784352,
+     "name": "Job Profile Code",
+     "value": null,
+     "value_type": "short_text"
+    }
+   ],
+   "id": 8238594,
+   "updated_at": "2026-11-09T17:31:12-05:00",
+   "requisition_id": null,
+   "title": "Commercial GRC Engineer - Sr. Security Engineer I",
+   "company_name": "Smartsheet",
+   "first_published": "2026-09-28T18:46:26-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;For over 20 years, Smartsheet has empowered teams to manage work seamlessly and scale solutions smarter. Now, in our most ambitious chapter yet, we are uniting human teams with AI agents. By orchestrating the work agents do best, automating manual tasks and uncovering insights at scale, we create the space for people to focus on what truly matter",
+   "departments": [
+    {
+     "id": 47063,
+     "name": "Security",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 89489,
+     "name": "United States",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse\u2019s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app.greenhouse.io/ai_opt_out_request/job_post/8238594/ai_opt_out",
+   "pay_input_ranges": [
+    {
+     "min_cents": 14500000,
+     "max_cents": 19375000,
+     "currency_type": "USD",
+     "title": "US Base Salary Pay Range"
+    }
+   ]
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/smartsheet/jobs/6299446",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": 2976835,
+   "location": {
+    "name": "Singapore, SGP"
+   },
+   "metadata": [
+    {
+     "id": 2870472,
+     "name": "Working Location",
+     "value": null,
+     "value_type": "single_select"
+    },
+    {
+     "id": 8784352,
+     "name": "Job Profile Code",
+     "value": null,
+     "value_type": "short_text"
+    }
+   ],
+   "id": 6299446,
+   "updated_at": "2026-11-09T17:31:07-05:00",
+   "requisition_id": null,
+   "title": "Commercial Account Executive (Asia)",
+   "company_name": "Smartsheet",
+   "first_published": "2024-10-20T20:14:28-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;For over 20 years, Smartsheet has empowered teams to manage work seamlessly and scale solutions smarter. Now, in our most ambitious chapter yet, we are uniting human teams with AI agents. By orchestrating the work agents do best, automating manual tasks and uncovering insights at scale, we create the space for people to focus on what truly matter",
+   "departments": [
+    {
+     "id": 36339,
+     "name": "Commercial Sales",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 323672,
+     "name": "Singapore",
+     "location": "Singapore",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse\u2019s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app.greenhouse.io/ai_opt_out_request/job_post/6299446/ai_opt_out"
+  }
+ ],
+ "meta": {
+  "total": 3
+ }
+}
