@@ -46,11 +46,11 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return profile;
   }
   const safeConnection = c => ({id:c.id, name:c.name, connected:c.lastSeen > 0 && now() - c.lastSeen < 90000, lastSeen:c.lastSeen, pairedAt:c.pairedAt || null, profileId:c.profileId || null});
-  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at})), lastCommand:job.lastCommand || null});
+  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, outcome:job.outcome || null, failure:job.failure || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at})), lastCommand:job.lastCommand || null});
   // Steps the app can start for a job; its extension runs them and reports back.
-  const COMMANDS = ['open','fullAuto','prepare','confirmResume','auto','scan','ask','fill','complete','focus','details'];
+  const COMMANDS = ['open','fullAuto','prepare','confirmResume','replaceResume','auto','scan','ask','fill','complete','fail','focus','details'];
   const pendingCommands = job => (job.commands || []).filter(c => !c.done);
-  const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Mark ended'};
+  const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Mark ended', fail:'Mark failed', replaceResume:'Use revised resume'};
   const STATUS_EVENTS = {'tabs-opened':'Job window opened', 'tabs-ready':'Job page and ChatGPT ready', 'questions-scanned':'Questions scanned', 'answers-reviewed':'Answers approved for filling', 'filled':'Answers filled on the form'};
   function logEvent(job, text, level = 'info') {
     const message = String(text || '').trim();
@@ -124,6 +124,16 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     for (const finish of [...(eventWaiters.get(job.connectionId) || [])]) finish();
     return {ok:true, url:job.url};
   }
+  // The hiring company, typed in the app when the job description does not name it. The
+  // resume and its folder use it.
+  function setCompany(profileId, jobId, company) {
+    const job = state.jobs.find(j => j.id === jobId && j.profileId === profileId);
+    if (!job) throw fail('Job not found.', 404);
+    const name = text(company, 250).trim();
+    if (!name) throw fail('Enter the hiring company.');
+    if (name !== job.company) {job.company = name;logEvent(job, `Company set to ${name}`);persist();}
+    return summary(job);
+  }
   function unlink(id) {
     state.connections = state.connections.filter(c => c.id !== id);
     for (const job of state.jobs) if (job.connectionId === id && job.status !== 'completed') job.status = 'unlinked';
@@ -181,6 +191,9 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       const changed = !job.progress || job.progress.text !== text(body.text, 400).trim();
       job.progress = {text:text(body.text, 400).trim(), level, key, at:now()};
       if (changed) logEvent(job, job.progress.text, level === 'attention' ? 'attention' : 'info');
+      // The resume step failed (ChatGPT refused or its reply could not be read): kept as the
+      // job's failure until a resume is exported, so the job shows Failed rather than Ended.
+      if (!job.files && (key === 'chatgpt-error' || key === 'full-auto-blocked' && body.stage === 'resume' && body.failed === true)) job.failure = {message:job.progress.text.replace(/^Needs you:\s*/, ''), at:now()};
       // The resume waiting for review, while it waits; gone once it is confirmed or replaced.
       if (key === 'confirm-resume' && typeof body.pendingResume === 'string') job.pendingResume = text(body.pendingResume, 200000);
       else delete job.pendingResume;
@@ -209,18 +222,22 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     if (kind === 'jd') {
       if (job.files) throw fail('Files already exported. Start a new assignment to change its JD.', 409);
       if (!text(body.description).trim()) throw fail('Job description is empty.');
-      job.jd = text(body.description).trim();job.company = text(body.company, 250).trim();job.title = text(body.title, 250).trim();
+      job.jd = text(body.description).trim();job.company = text(body.company, 250).trim() || job.company || '';job.title = text(body.title, 250).trim();
       job.status = 'jd-received';job.error = '';logEvent(job, `Job description read${job.title ? ': ' + job.title : ''}`);persist();return detail(job);
     }
     if (kind === 'resume') {
       if (!job.jd) throw fail('Send the job description first.');
-      if (job.files) throw fail('Files are already exported for this job.', 409);
+      // A revised resume (you asked ChatGPT for changes) replaces the exported files, only
+      // when asked to.
+      const replacing = !!job.files;
+      if (replacing && body.replace !== true) throw fail('Files are already exported for this job.', 409);
       busy.add(id);
       try {
-        const result = await exportResume(profileFor(job), text(body.response), job);
+        const result = await exportResume(profileFor(job), text(body.response), job, {replace:replacing});
         if (!result || result.error) throw fail(result && result.error || 'Resume export failed.');
-        job.files = result.files;job.resume = result.resume;job.status = 'resume-exported';job.error = '';logEvent(job, 'Resume exported (PDF and DOCX)');persist();return detail(job);
-      } catch (e) {job.error = e.message;logEvent(job, `Resume export failed: ${e.message}`, 'error');persist();throw fail(e.message, e.status || 400);} finally {busy.delete(id);}
+        job.files = result.files;job.resume = result.resume;job.status = replacing && job.status !== 'jd-received' ? job.status : 'resume-exported';job.error = '';delete job.failure;
+        logEvent(job, replacing ? 'Resume replaced with the revised one (PDF and DOCX)' : 'Resume exported (PDF and DOCX)');persist();return detail(job);
+      } catch (e) {job.error = e.message;job.failure = {message:`Resume export failed: ${e.message}`, at:now()};logEvent(job, `Resume export failed: ${e.message}`, 'error');persist();throw fail(e.message, e.status || 400);} finally {busy.delete(id);}
     }
     if (kind === 'status') {
       if (!['tabs-opened','tabs-ready','questions-scanned','answers-reviewed','filled'].includes(body.status)) throw fail('Invalid job status.');
@@ -229,7 +246,11 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     }
     if (kind === 'complete') {
       if (body.confirmed !== true) throw fail('Confirm manually that the application ended.');
-      job.status = 'completed';job.completedAt = now();logEvent(job, 'Marked ended');persist();return summary(job);
+      // Ended means it went through; a job ended without a resume, or marked failed, is Failed.
+      const outcome = ['submitted','failed'].includes(body.outcome) ? body.outcome : job.files && !job.failure ? 'submitted' : 'failed';
+      job.status = 'completed';job.completedAt = now();job.outcome = outcome;
+      if (outcome === 'failed') job.failure = {message:job.failure?.message || job.error || (job.files ? 'Marked failed' : 'No resume was exported'), at:now()};
+      logEvent(job, outcome === 'failed' ? `Marked failed: ${job.failure.message}` : 'Marked ended');persist();return summary(job);
     }
     throw fail('Unknown operation.', 404);
   }
@@ -306,6 +327,6 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return server && server.address();
   }
   async function stop() {if (server) {const current = server;server = null;current.closeAllConnections();await new Promise(resolve => current.close(resolve));}}
-  return {start, stop, dashboard, assign, unlink, rotateCode, command, reset};
+  return {start, stop, dashboard, assign, unlink, rotateCode, command, reset, setCompany};
 }
 module.exports = { createExtensionBridge, PORT };

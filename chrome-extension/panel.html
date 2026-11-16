@@ -29,6 +29,7 @@
 <div class="columns grid grid-cols-2 gap-[18px] max-[750px]:grid-cols-1 max-[520px]:gap-1.5"><label class="mb-2">Hiring company<input id="company"></label><label class="mb-2">Job title<input id="job-title"></label></div>
 <label class="mb-2">Review job description<textarea id="jd" rows="7"></textarea></label>
 <button data-step="sendResume" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Send to ChatGPT</button></details>
+<div id="replace-resume-tools" hidden><p class="hint my-3.5 text-[13px] text-muted">Asked ChatGPT for changes? Once its revised resume has finished, use it in place of the exported one. You review it first.</p><button data-step="readResume" id="replace-resume" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Use ChatGPT's revised resume</button></div>
 <section id="resume-response-review" hidden><h3 class="my-[1em] text-[1.17em] font-bold">Review collected resume</h3><p id="resume-response-target" class="my-3.5 text-muted"></p>
 <label class="mb-2">Resume JSON<textarea id="resume-response-preview" rows="10" readonly></textarea></label>
 <label class="check mb-2 flex items-center gap-2.5"><input type="checkbox" id="approve-resume-response"> This is the correct resume for this job.</label>

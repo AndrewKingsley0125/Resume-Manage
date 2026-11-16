@@ -192,6 +192,7 @@ async function loadDetail() {
   $('company').value = selected.company || '';$('job-title').value = selected.title || '';$('jd').value = selected.jd || '';
   $('files').textContent = selected.files ? Object.entries(selected.files).map(([kind,path]) => `${kind.toUpperCase()}: ${path || 'Not written'}`).join('\n') : '';
   $('stop-full-auto').hidden=!(run.fullAuto?.active || run.autopilot?.active);
+  $('replace-resume-tools').hidden=!selected.files || selected.status==='completed';
   preview();
   if(changedJob || activeStep==='connection')setStep(recommendedStep());
   stepJobId=id;

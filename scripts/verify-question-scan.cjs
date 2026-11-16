@@ -67,6 +67,51 @@ const cases=[
     html:`<form><div class="ashby-application-form-field-entry"><div class="ashby-application-form-question-title">Do you consent to a background check?</div><button type="button" data-option="y">Yes</button><button type="button" data-option="n">No</button></div></form>`,
     check:fields=>{assert.deepEqual(labels(fields),['Do you consent to a background check?']);assert.equal(fields[0].manualOnly,true);}},
 
+  {name:"Ashby's Yes / No buttons (no type attribute, hidden checkbox) are one question and are clicked without submitting",
+    html:`<form id="f"><div class="ashby-application-form-field-entry"><label class="ashby-application-form-question-title" for="q1">Will you now or in the future require sponsorship?</label><div class="ashby-application-form-input-yesno"><button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" tabindex="-1" name="q1"></div></div><button class="ashby-application-form-submit-button">Submit Application</button></form>`,
+    setup:`window.submits=0;document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();submits++;});
+      for(const button of document.querySelectorAll('[data-option]'))button.addEventListener('click',()=>{for(const other of document.querySelectorAll('[data-option]'))other.setAttribute('aria-pressed',String(other===button));document.querySelector('[name=q1]').checked=button.dataset.option==='yes';});`,
+    fill:`fields=>[{...fields[0],answer:'No'}]`,
+    after:`()=>({no:document.querySelector('[data-option=no]').getAttribute('aria-pressed'),yes:document.querySelector('[data-option=yes]').getAttribute('aria-pressed'),submits})`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.label,field.type,field.options]),[['Will you now or in the future require sponsorship?','radio',['Yes','No']]]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.deepEqual(after,{no:'true',yes:'false',submits:0});
+    }},
+  {name:'Gem: radios without a name are one question, labelled by the text above their box',
+    html:`<form><div><div><span>Will you require sponsorship?<span> *</span></span></div><div><div><div><div><div><input id="r1" type="radio"><label for="r1"><span></span><div>Yes</div></label></div><div><input id="r2" type="radio"><label for="r2"><span></span><div>No</div></label></div></div></div></div></div></div>
+      <div><div><span>Willing to work onsite?</span></div><div><div><div><div><div><input id="r3" type="radio"><label for="r3"><div>Yes</div></label></div><div><input id="r4" type="radio"><label for="r4"><div>No</div></label></div></div></div></div></div></div></form>`,
+    check:fields=>assert.deepEqual(fields.map(field=>[field.type,field.label,field.options,field.required]),[['radio','Will you require sponsorship?',['Yes','No'],true],['radio','Willing to work onsite?',['Yes','No'],false]])},
+  {name:"Gem: a 'Please select' button is a dropdown whose menu items are its choices, and it fills",
+    html:`<form><div><div>Gender</div><button type="button" id="g"><div>Please select<i></i></div></button></div></form>`,
+    setup:`document.getElementById('g').addEventListener('click',()=>{const portal=document.createElement('div');portal.innerHTML='<menu><li role="menuitem">Male</li><li role="menuitem">Female</li><li role="menuitem">Decline to self-identify</li></menu>';document.body.append(portal);
+      for(const item of portal.querySelectorAll('li'))item.addEventListener('click',()=>{document.querySelector('#g div').firstChild.textContent=item.textContent;portal.remove();});});`,
+    fill:`fields=>[{...fields[0],answer:'Female'}]`,
+    after:`()=>({shown:document.getElementById('g').innerText.trim(),values:ResumeApplyPage.values().values.map(item=>item.value)})`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.controlKind,field.label,field.answered]),[['combobox','button-menu','Gender',false]]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.deepEqual(after,{shown:'Female',values:['Female']});
+    }},
+  {name:'Breezy: the heading right above a field is its question; a section title is not',
+    html:`<form><div><h2>Personal Details</h2><h3><span>Full Name</span><span>*</span></h3><input name="cName" type="text"></div><ul><li><div><h3><span>Will you require an H-1B visa sponsorship?</span></h3><ul><li><label><input type="radio" value="No" name="q2"><span>No</span></label></li><li><label><input type="radio" value="Yes" name="q2"><span>Yes</span></label></li></ul></div></li>
+      <li><div><h3><span>Please drop your LinkedIn URL</span></h3><textarea name="section_1_question_0"></textarea></div></li></ul></form>`,
+    check:fields=>assert.deepEqual(labels(fields),['Full Name','Will you require an H-1B visa sponsorship?','Please drop your LinkedIn URL'])},
+  {name:"Rippling: a drop zone takes the field's linked name, so the résumé box is the resume upload",
+    html:`<form><div data-testid="field"><div><span id="l8">Résumé</span><span>*</span></div><div><div id="t10" hidden>Total 0 file selected</div><label data-testid="resume" aria-labelledby="t10 l8"><input accept=".doc,.docx,.pdf" data-testid="input-resume" type="file"><button type="button"><span>Drop or select (.doc / .docx / .pdf)</span></button></label></div></div>
+      <div data-testid="field"><div><span id="l9">Cover letter</span></div><div><label data-testid="cover_letter" aria-labelledby="l9"><input type="file"><button type="button"><span>Drop or select (.doc / .docx / .pdf)</span></button></label></div></div><label>First name<input name="f"></label></form>`,
+    check:fields=>assert.deepEqual(fields.filter(field=>field.type==='file').map(field=>[field.label,!!field.resumeUpload,field.manualOnly]),[['Résumé',true,false],['Cover letter',false,true]])},
+  {name:'a question with consent fine print after its question mark is still answered',
+    html:`<form><fieldset><legend>Are you, or your close relative, currently employed by Deloitte? By answering Yes, I consent to receive text messages about my job application.</legend>${radios('d')}</fieldset>
+      <fieldset><legend>Do you consent to complete identity verification?</legend>${radios('c')}</fieldset><label><input type="checkbox" name="smsConsent">Send me texts</label></form>`,
+    check:fields=>assert.deepEqual(fields.map(field=>field.manualOnly),[false,true,true])},
+  {name:'a posting with no form opens its application from the Apply button, never from a search form',
+    html:`<form role="search"><input name="q"><button>Apply</button></form><main><h1>Engineer</h1><button type="button" data-testid="Apply now" id="apply">Apply now</button></main>`,
+    setup:`window.opened=0;document.getElementById('apply').addEventListener('click',()=>{opened++;});`,
+    fill:`()=>[]`,
+    after:`()=>{const result=ResumeApplyPage.openApplication();return new Promise(resolve=>setTimeout(()=>resolve({result,opened}),150));}`,
+    check:({after})=>assert.deepEqual(after,{result:{clicked:'Apply now',url:''},opened:1})},
+
   {name:'custom-styled radios with display:none inputs are found',pending:'hidden choice inputs',
     html:`<form><fieldset><legend>Need sponsorship?</legend><label><input style="display:none" type="radio" name="s" value="y"><span>Yes</span></label><label><input style="display:none" type="radio" name="s" value="n"><span>No</span></label></fieldset></form>`,
     check:fields=>assert.deepEqual(labels(fields),['Need sponsorship?'])},
@@ -120,13 +165,14 @@ async function load(win,host) {
   await win.loadURL(`https://${host}/`);
   await win.webContents.executeJavaScript(tools);
 }
-function scan(win,{html,setup='',discover=false}) {
+function scan(win,{html,setup='',discover=false,fill='',after=''}) {
   return win.webContents.executeJavaScript(`(async()=>{
     document.body.innerHTML=${JSON.stringify(html)};
     const host=document.getElementById('host');
     if(host)host.attachShadow({mode:'open'}).innerHTML='<label>Inside shadow<input name="s"></label>';
     ${setup}
     const fields=ResumeApplyPage.scan().fields;
+    if(${!!fill}){const filled=await ResumeApplyPage.fill((${fill || 'null'})(fields));return {fields,filled,after:await (${after || 'null'})()};}
     return ${discover}?(await ResumeApplyPage.discoverOptions()).fields:fields;
   })()`);
 }

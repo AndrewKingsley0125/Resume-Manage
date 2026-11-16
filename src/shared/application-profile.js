@@ -29,11 +29,16 @@
     ['hasCompanyConnections', 'Relatives, friends, or other connections at the company?', 'Company connections', ['Yes', 'No']],
     ['criminalHistory', 'Criminal-history response', 'Background', yesNo],
     ['criminalHistoryDetails', 'Exact question / explanation for criminal-history response', 'Background'],
+    ['availableToStart', 'When could you start if hired?', 'Common answers'],
+    ['howDidYouHear', 'How did you hear about us? (preferred answer)', 'Common answers'],
+    ['appliedBefore', 'Applied to this company before?', 'Common answers', ['No', 'Yes']],
   ];
+  // Answers most applicants give; a profile saved before these existed starts with them.
+  const defaults = { availableToStart: 'Immediately', howDidYouHear: 'LinkedIn', appliedBefore: 'No' };
   const string = value => typeof value === 'string' ? value.trim() : '';
   function normalize(value) {
     const source = value && typeof value === 'object' ? value : {};
-    const result = Object.fromEntries(fields.map(([key]) => [key, string(source[key])]));
+    const result = Object.fromEntries(fields.map(([key]) => [key, key in defaults && !(key in source) ? defaults[key] : string(source[key])]));
     result.hasCompanyConnections = source.hasCompanyConnections === 'Yes' ? 'Yes' : 'No';
     result.answerPrompt = typeof source.answerPrompt === 'string' ? source.answerPrompt : defaultAnswerPrompt;
     return result;

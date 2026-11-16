@@ -85,8 +85,12 @@
   // What a sent job is doing now, as its Resume Apply tab reports it: [text, level].
   // Whether the browser running a job is connected right now.
   const browserOnline = job => !!(liveState && liveState.connections.some(c => c.id === job.connectionId && c.connected));
+  // A job that did not go through: ended as Failed, or open with its resume step failed.
+  const failed = job => job.status === 'completed' ? job.outcome === 'failed' : !!job.failure;
   function jobState(job) {
+    if (job.status === 'completed' && job.outcome === 'failed') return [`Failed: ${(job.failure && job.failure.message) || 'did not go through'}`, 'done'];
     if (['completed','unlinked'].includes(job.status)) return [statusLabel(job.status), 'done'];
+    if (job.failure) return [`Failed: ${job.failure.message}`, 'attention'];
     if (job.error) return [`Needs you: ${job.error}`, 'attention'];
     const progress = job.progress || {};
     // Nothing can be running while its browser is offline: don't show old progress as work.
@@ -162,8 +166,8 @@
   }
   // Steps the app can start for a job that is open in Chrome. Its browser runs each one
   // exactly like the same button in the job's Resume Apply window, and reports back here.
-  const COMMAND_LABELS = {open:'Reopen windows', fullAuto:'Full auto', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', scan:'Scan questions', ask:'Ask ChatGPT', auto:'Auto-fill', fill:'Fill form', complete:'Mark ended', details:'Show details in Chrome', focus:'Show in Chrome', review:'Review resume'};
-  const COMMAND_HINTS = {open:'Reopen or rearrange the job window, ChatGPT and its Resume Apply window', fullAuto:'Do every step by itself: read the JD, write and export the resume, then fill the application. It stops at the first step that needs you and never clicks Submit.', prepare:"Read the job description from the job page and send the resume prompt to this job's ChatGPT", confirmResume:'Export the resume ChatGPT wrote (PDF and DOCX)', scan:'Read the questions on the application page', ask:'Send the unanswered questions to ChatGPT', auto:'Fill the application page by page; it stops before Submit', fill:"Put ChatGPT's answers on this page of the form. Nothing is submitted.", complete:'Mark this application ended (after you submitted or abandoned it)'};
+  const COMMAND_LABELS = {fail:'Mark failed', replaceResume:'Use revised resume', open:'Reopen windows', fullAuto:'Full auto', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', scan:'Scan questions', ask:'Ask ChatGPT', auto:'Auto-fill', fill:'Fill form', complete:'Mark ended', details:'Show details in Chrome', focus:'Show in Chrome', review:'Review resume'};
+  const COMMAND_HINTS = {fail:'End this application as Failed (it did not go through), and close its Chrome tabs', replaceResume:"Read the revised resume ChatGPT wrote after you asked for changes, review it, then replace the exported one", open:'Reopen or rearrange the job window, ChatGPT and its Resume Apply window', fullAuto:'Do every step by itself: read the JD, write and export the resume, then fill the application. It stops at the first step that needs you and never clicks Submit.', prepare:"Read the job description from the job page and send the resume prompt to this job's ChatGPT", confirmResume:'Export the resume ChatGPT wrote (PDF and DOCX)', scan:'Read the questions on the application page', ask:'Send the unanswered questions to ChatGPT', auto:'Fill the application page by page; it stops before Submit', fill:"Put ChatGPT's answers on this page of the form. Nothing is submitted.", complete:'Mark this application ended (after you submitted or abandoned it)'};
   // Only the steps that make sense where the job is now. Nothing while it is working by
   // itself or waiting for you on the job page.
   function availableSteps(job) {
@@ -187,7 +191,8 @@
     button.title = queued ? 'Waiting for the browser to run it' : COMMAND_HINTS[action];
     button.disabled = queued;
     button.addEventListener('click', async () => {
-      if (action === 'complete' && !confirm(`Mark "${jobName(job)}" as ended? Do this after you submitted or abandoned the application. Its job tab, ChatGPT tab and details window will close.`)) return;
+      if (action === 'complete' && !confirm(`Mark "${jobName(job)}" as ended? Do this after you submitted or abandoned the application. Its job tab, ChatGPT tab and details window will close.${job.exported && !job.failure ? '' : ' It has no exported resume, so it is recorded as Failed.'}`)) return;
+      if (action === 'fail' && !confirm(`Mark "${jobName(job)}" as failed? Use this when the application did not go through. Its job tab, ChatGPT tab and details window will close.`)) return;
       if (action === 'confirmResume' && !confirm(`Export the resume ChatGPT wrote for "${jobName(job)}"? Review it in the job's Resume Apply window first if you have not.`)) return;
       const active = token;button.disabled = true;
       try {
@@ -214,14 +219,43 @@
     });
     return item;
   }
+  // The hiring company, editable when the job description does not name it (or names it
+  // wrongly). The resume and its folder use it.
+  function companyEditor(job, shown) {
+    const button = el('button', 'job-card-company block max-w-full cursor-text rounded border border-transparent bg-transparent p-0 text-left text-xs font-semibold text-muted [overflow-wrap:anywhere] hover:border-line hover:text-ink', shown || 'Add company');
+    button.type = 'button';button.dataset.action = 'company';
+    button.title = job.company ? 'Change the hiring company used for the resume and its folder' : 'The job description names no company: enter it for the resume and its folder';
+    if (!shown) button.classList.add('!text-attention-ink');
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const input = el('input', 'job-company-input w-full rounded border border-line bg-bg px-1.5 py-0.5 text-xs text-ink outline-none focus:border-accent');
+      input.value = job.company || shown || '';input.placeholder = 'Hiring company';input.setAttribute('aria-label', `Hiring company for ${jobName(job)}`);
+      let done = false;
+      const finish = async save => {
+        if (done) return;done = true;
+        const value = input.value.trim();
+        if (save && value && value !== job.company) {
+          const active = token;
+          try {await window.api.extensionSetCompany({profileId:currentProfile.id, jobId:job.id, company:value});if (active === token) {$('extension-dispatch-status').textContent = `Company set to ${value}.`;await refreshConnections();}return;}
+          catch (error) {if (active === token) $('extension-dispatch-status').textContent = error.message;}
+        }
+        input.replaceWith(button);
+      };
+      input.addEventListener('keydown', key => {key.stopPropagation();if (key.key === 'Enter') finish(true);if (key.key === 'Escape') finish(false);});
+      input.addEventListener('click', inner => inner.stopPropagation());
+      input.addEventListener('blur', () => finish(true));
+      button.replaceWith(input);input.focus();input.select();
+    });
+    return button;
+  }
   function jobMenu(job) {
     const wrap = el('div', 'job-menu-wrap relative flex-none');
     const toggle = el('button', 'btn btn-ghost btn-sm job-menu-button px-2.5 py-[5px] text-base leading-none tracking-[1px]', '⋯');toggle.type = 'button';
     toggle.title = 'More for this job';toggle.setAttribute('aria-label', `More for ${jobName(job)}`);toggle.setAttribute('aria-haspopup', 'menu');
     const menu = el('div', 'job-menu absolute right-0 top-[calc(100%+4px)] z-[5] flex min-w-[200px] flex-col rounded-[10px] border border-line bg-elev p-1.5 shadow-soft');menu.setAttribute('role', 'menu');
-    for (const action of ['details', 'open', 'reset', 'complete']) {
+    for (const action of ['details', 'open', ...(job.exported ? ['replaceResume'] : []), 'reset', 'complete', 'fail']) {
       if (action === 'reset') {menu.append(startOverItem(job, menu, toggle));continue;}
-      const item = commandButton(job, action, false);item.className = MENU_ITEM_CLASS[action === 'complete' ? 'danger' : 'normal'];item.setAttribute('role', 'menuitem');
+      const item = commandButton(job, action, false);item.className = MENU_ITEM_CLASS[['complete','fail'].includes(action) ? 'danger' : 'normal'];item.setAttribute('role', 'menuitem');
       item.addEventListener('click', () => {openMenuJobId = null;menu.hidden = true;toggle.setAttribute('aria-expanded', 'false');});
       menu.append(item);
     }
@@ -327,14 +361,14 @@
     const names = el('div', 'job-card-names flex flex-col');
     const title = el('strong', 'job-card-title line-clamp-2 text-[13px] leading-[1.35]', identity.title || '—');title.title = identity.title || '';
     names.append(title);
-    const company = el('span', 'job-card-company block text-xs font-semibold text-muted [overflow-wrap:anywhere]', identity.company || '—');
+    const company = job && open && window.api && window.api.extensionSetCompany ? companyEditor(job, identity.company) : el('span', 'job-card-company block text-xs font-semibold text-muted [overflow-wrap:anywhere]', identity.company || '—');
     // Process
     const stage = el('div', 'job-row-stage min-w-0');
     if (open) stage.append(stageBar(job));
-    else stage.append(el('span', STAGE_LABEL_CLASS, job ? 'Ended' : 'Not started'));
+    else stage.append(el('span', job && failed(job) ? `${STAGE_LABEL_CLASS} !text-danger font-semibold` : STAGE_LABEL_CLASS, job ? (failed(job) ? 'Failed' : 'Ended') : 'Not started'));
     // Status: what it is doing (and when that changed), the last step's result, its history
     const status = el('div', 'job-row-state flex min-w-0 flex-col gap-0.5');
-    const stateLine = el('p', `job-card-state m-0 text-[13px] font-semibold leading-[1.4] ${STATE_TEXT[lanes]}`, stateText);
+    const stateLine = el('p', `job-card-state m-0 text-[13px] font-semibold leading-[1.4] ${job && failed(job) ? 'is-failed text-danger' : STATE_TEXT[lanes]}`, stateText);
     const updated = job && ((job.events || []).at(-1)?.at || (job.progress && job.progress.at));
     if (updated && open) stateLine.append(el('span', 'job-card-updated font-normal text-muted', ` · ${ago(updated)}`));
     status.append(stateLine);

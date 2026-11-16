@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   extensionAssign: args => ipcRenderer.invoke('extension:assign', args),
   extensionCommand: args => ipcRenderer.invoke('extension:command', args),
   extensionReset: args => ipcRenderer.invoke('extension:reset', args),
+  extensionSetCompany: args => ipcRenderer.invoke('extension:setCompany', args),
 
   discoveryStatus: () => ipcRenderer.invoke('discovery:status'),
   discoveryDiscover: args => ipcRenderer.invoke('discovery:discover', args),

@@ -158,7 +158,8 @@ async function harvestAnswers(id,run) {
   for(const frameId of new Set(fields.map(field=>field.frameId))) {
     const result=await page(run.jobTabId,'values',[],frameId).catch(()=>null);
     if(!result || result.scanId!==fields.find(field=>field.frameId===frameId)?.scanId)continue;
-    for(const item of result.values)values.push({id:`${frameId}:${item.id}`,value:item.value});
+    // A site default you left as it was is not your correction, so it is not learned here.
+    for(const item of result.values)if(!item.preset)values.push({id:`${frameId}:${item.id}`,value:item.value});
   }
   if(!values.length)return null;
   return rememberSite(await request(jobPath(id)),fields,values);
@@ -290,10 +291,10 @@ async function collectMonitoredResponse(message,sender) {
   if(locks.has(message.id))return {retry:true};
   locks.add(message.id);
   try {
-    if(message.event==='chat-response-timeout') {
-      const timedOut='Automatic collection timed out. Use Read or paste the completed response.';
-      await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:timedOut},
-        ...(run.fullAuto?.active?{fullAuto:null,fullAutoBlocker:{stage:message.kind==='resume'?'resume':'questions',message:'ChatGPT did not finish in time.',at:Date.now()}}:{})});
+    if(message.event==='chat-response-timeout' || message.event==='chat-response-error') {
+      const reason=message.event==='chat-response-error'?`ChatGPT showed an error: ${String(message.text || '').slice(0,300)} Retry in the ChatGPT tab, or send the prompt again.`:'Automatic collection timed out. Use Read or paste the completed response.';
+      await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:reason},
+        ...(run.fullAuto?.active?{fullAuto:null,fullAutoBlocker:{stage:message.kind==='resume'?'resume':'questions',message:message.event==='chat-response-error'?reason:'ChatGPT did not finish in time.',failed:message.kind==='resume',at:Date.now()}}:{})});
     }else if(message.kind==='resume') {
       const detail=await request(jobPath(message.id));
       let matched=false;
@@ -333,7 +334,18 @@ async function collectMonitoredResponse(message,sender) {
     chrome.runtime.sendMessage({event:'response-ready',id:message.id,kind:message.kind,marker:monitor.marker}).catch(()=>{});
     return {collected:true};
   }catch(error){
-    await saveRun(message.id,{responseMonitor:{...monitor,lastError:error.message}});
+    // A finished reply that still has no JSON after several reads (a refusal, or a reply
+    // about something else) will not become one: stop waiting and say why.
+    const settledReply=!/still generating|still changing|still responding/i.test(error.message);
+    const failures=settledReply?(monitor.failures || 0)+1:0;
+    if(failures>=6) {
+      const reason=message.kind==='resume'?'ChatGPT finished, but its reply has no resume JSON (it may have refused). Check the ChatGPT tab, then send the resume prompt again.':'ChatGPT finished, but its reply has no answers JSON. Check the ChatGPT tab, then ask again.';
+      await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:reason,lastError:error.message},
+        ...(run.fullAuto?.active?{fullAuto:null,fullAutoBlocker:{stage:message.kind==='resume'?'resume':'questions',message:reason,failed:message.kind==='resume',at:Date.now()}}:{})});
+      chrome.runtime.sendMessage({event:'response-collection-progress',id:message.id}).catch(()=>{});
+      return {stop:true};
+    }
+    await saveRun(message.id,{responseMonitor:{...monitor,lastError:error.message,failures}});
     if(monitor.lastError!==error.message)chrome.runtime.sendMessage({event:'response-collection-progress',id:message.id}).catch(()=>{});
     return {retry:true};
   }
@@ -377,7 +389,6 @@ async function fillFields(id,run,requested) {
   if(run.autopilot?.active) {
     const keys=items.map(item=>`${item.pageUrl}|${outcomeKey(item.field)}`);
     patch.autopilot={...run.autopilot,attempted:[...new Set([...run.autopilot.attempted,...keys])]};
-    patch.autoTried=[...new Set([...(run.autoTried || []),...keys])];
   }
   await saveRun(id,patch);
   return results;
@@ -435,7 +446,7 @@ async function uploadResumeField(id,run,field) {
   if(results[0]?.error)throw new Error(results[0].error);
   const upload=await page(run.jobTabId,'uploadFinished',[field.localId],field.frameId);
   if(upload.status!=='done')throw new Error(`${upload.message} Attach it on the form yourself, then continue.`);
-  await saveRun(id,{resumeUploadedUrl:field.pageUrl});
+  await saveRun(id,{resumeUploadedUrl:field.pageUrl,resumeReplaced:false});
   await page(run.jobTabId,'settled').catch(()=>{});
 }
 // One click: read the form, upload the resume, get answers, fill, and repeat for
@@ -470,7 +481,8 @@ async function autoFillPage(id) {
     await saveRun(id,{autopilot:{...current.autopilot,previousPage:null}});
     current=await getRun(id);
     const resume=current.fields.find(field=>field.type==='file' && field.resumeUpload && !field.manualOnly);
-    if(resume && current.resumeUploadedUrl!==resume.pageUrl) {
+    // A resume already attached on this page (by you or the site) is left as it is.
+    if(resume && (current.resumeReplaced || !resume.answered && current.resumeUploadedUrl!==resume.pageUrl)) {
       const job=await request(jobPath(id));
       let note='Resume not uploaded: generate and export it first.';
       if(job.files?.docx)try {await uploadResumeField(id,current,resume);await scanQuestions(id,{auto:true});note='';}catch(error){note=`Resume not uploaded: ${error.message}`;}
@@ -484,15 +496,20 @@ async function autoFillStep(id) {
   const run=await getRun(id),autopilot=run.autopilot;
   if(!autopilot?.active)return {message:'Auto-fill stopped.'};
   const recalled=currentAnswers(run);
-  if(recalled.unasked.length) {
+  // A field that already holds an answer (typed by you, or filled on an earlier click) is
+  // left as it is and never sent to ChatGPT. A site default you have not changed, such as
+  // a dropdown that starts on a real option, does not count. Read from the page now, so
+  // what you typed while ChatGPT was answering counts too.
+  const filled=await filledNow(run),hasValue=field=>filled.has(field.id)?filled.get(field.id):answeredByYou(field);
+  const unasked=recalled.unasked.filter(fieldId=>{const field=(run.fields || []).find(item=>item.id===fieldId);return !field || !hasValue(field);});
+  if(unasked.length) {
     if(autopilot.round>=AUTO_ROUNDS)return finishAutoFill(id);
     await saveRun(id,{autopilot:{...autopilot,round:autopilot.round+1}});
-    const {count}=await askQuestions(id,run,recalled.unasked);
+    const {count}=await askQuestions(id,run,unasked);
     return {message:`Asked ChatGPT ${count} question${count===1?'':'s'}. Auto-fill will continue when it replies.`};
   }
-  const attempted=new Set(autopilot.attempted),tried=new Set(run.autoTried || []);
-  // A field filled on an earlier click and still holding a value may be the user's own fix.
-  const due=field=>{const key=`${field.pageUrl}|${outcomeKey(field)}`;return !attempted.has(key) && !(tried.has(key) && field.answered);};
+  const attempted=new Set(autopilot.attempted);
+  const due=field=>!attempted.has(`${field.pageUrl}|${outcomeKey(field)}`) && !hasValue(field);
   const requested=answerableQuestions(run.fields).filter(field=>!field.manualOnly && field.type!=='file' && due(field)).map(field=>({id:field.id,answer:recalled.answers.find(item=>item.id===field.id)?.answer})).filter(item=>item.answer!=null && item.answer!=='');
   if(!requested.length)return advanceOrFinish(id);
   await request(jobPath(id)+'/status',{status:'answers-reviewed'});
@@ -500,6 +517,55 @@ async function autoFillStep(id) {
   return settleFill(id,await getRun(id),results);
 }
 // Moves on only when this page is complete, so a form is never pushed past a gap.
+// Clicks the posting's Apply button or tab. When it opens the form in a new tab, that tab
+// becomes the job's tab, beside its ChatGPT conversation, and the posting tab is closed.
+async function openApplicationForm(id,run) {
+  const all=await chrome.tabs.query({});
+  // You already clicked Apply and it opened the form in a new tab: use that tab.
+  const yours=all.filter(tab=>tab.openerTabId===run.jobTabId && tab.id!==run.chatTabId && /apply|application|candidate|job|career/i.test(tab.url || tab.pendingUrl || '')).sort((a,b)=>b.id-a.id)[0];
+  if(yours) {
+    await adoptJobTab(id,run,yours.id);
+    const current=await getRun(id);await waitComplete(current.jobTabId);await page(current.jobTabId,'settled').catch(()=>{});
+    return true;
+  }
+  const before=new Set(all.map(tab=>tab.id));
+  const startUrl=(await chrome.tabs.get(run.jobTabId)).url;
+  const opened=await page(run.jobTabId,'openApplication').catch(()=>null);
+  if(!opened)return false;
+  let child=null;
+  for(let i=0;i<16 && !child;i++) {
+    await new Promise(resolve=>setTimeout(resolve,250));
+    child=(await chrome.tabs.query({})).find(tab=>!before.has(tab.id) && tab.openerTabId===run.jobTabId) || null;
+    const job=await chrome.tabs.get(run.jobTabId).catch(()=>null);
+    if(!child && job && (job.status==='loading' || job.url!==startUrl))break;
+  }
+  if(child) await adoptJobTab(id,run,child.id);
+  else await new Promise(resolve=>setTimeout(resolve,800));
+  const current=await getRun(id);
+  await waitComplete(current.jobTabId);
+  await page(current.jobTabId,'settled').catch(()=>{});
+  return true;
+}
+async function adoptJobTab(id,run,tabId) {
+  await waitComplete(tabId).catch(()=>{});
+  const layout=await arrangeWorkspace(chrome,tabId,run.chatTabId).catch(()=>null);
+  const tab=await chrome.tabs.get(tabId);
+  await saveRun(id,{jobTabId:tabId,windowId:tab.windowId,ready:false,fields:[],answers:[],...(layout || {})});
+  await chrome.tabs.remove(run.jobTabId).catch(()=>{});
+}
+const answeredByYou=field=>!!field.answered && !field.preset;
+// For each scanned field, whether it holds an answer on the page right now (a site default
+// left as it was does not count). A frame whose page changed since the scan is left out;
+// its fields keep the state the scan saw.
+async function filledNow(run) {
+  const now=new Map(),fields=run.fields || [];
+  for(const frameId of new Set(fields.map(field=>field.frameId))) {
+    const result=await page(run.jobTabId,'values',[],frameId).catch(()=>null);
+    if(!result || result.scanId!==fields.find(field=>field.frameId===frameId)?.scanId)continue;
+    for(const {id,value,preset} of result.values)now.set(`${frameId}:${id}`,!preset && value!=null && value!=='' && value!==false && !(Array.isArray(value) && !value.length));
+  }
+  return now;
+}
 async function advanceOrFinish(id) {
   const run=await getRun(id),autopilot=run.autopilot;
   if(!autopilot?.active)return finishAutoFill(id);
@@ -525,7 +591,7 @@ async function advanceOrFinish(id) {
 async function finishAutoFill(id,{closing='This is the last page Auto-fill can reach. Check the form, then click Submit yourself.'}={}) {
   const run=await getRun(id),autopilot=run.autopilot || {filled:0,failed:[],note:''};
   const recalled=currentAnswers(run);
-  const blank=answerableQuestions(run.fields || []).filter(field=>!field.manualOnly && (recalled.answers.find(item=>item.id===field.id)?.answer ?? '')==='').map(field=>field.label);
+  const blank=answerableQuestions(run.fields || []).filter(field=>!field.manualOnly && !answeredByYou(field) && (recalled.answers.find(item=>item.id===field.id)?.answer ?? '')==='').map(field=>field.label);
   const manual=(run.fields || []).filter(field=>field.manualOnly).map(field=>field.label);
   const parts=[`Auto-fill finished: ${autopilot.filled} field${autopilot.filled===1?'':'s'} filled.`];
   if(autopilot.note)parts.push(autopilot.note);
@@ -564,8 +630,8 @@ async function startFullAuto(id) {
   await saveRun(id,{fullAuto:{active:true,stage:'pages',startedAt:Date.now()},fullAutoBlocker:null,autoSummary:null});
   return fullAutoContinue(id);
 }
-async function stopFullAuto(id,stage,reason) {
-  await saveRun(id,{fullAuto:null,fullAutoBlocker:{stage,message:reason,at:Date.now()}});
+async function stopFullAuto(id,stage,reason,{failed=false}={}) {
+  await saveRun(id,{fullAuto:null,fullAutoBlocker:{stage,message:reason,failed,at:Date.now()}});
   return {message:`Full auto stopped at ${FULL_AUTO_STEP[stage]}: ${reason} Finish this step yourself, or fix it and click Full auto again to carry on.`,blocked:stage};
 }
 async function fullAutoContinue(id) {
@@ -593,6 +659,10 @@ async function fullAutoContinue(id) {
       let posting = job.jd ? {company:job.company || '', title:job.title || '', description:job.jd} : (await command({action:'extract',id})).job;
       const description = String(posting?.description || '').trim();
       if (description.length < FULL_AUTO_MIN_JD) return stopFullAuto(id,stage,description ? 'The job description read from the page looks incomplete.' : 'No job description was found on the page.');
+      // The resume and its folder are named after the company: ask for it rather than guess.
+      const company = String(posting.company || '').trim() || job.company || '';
+      if (!company) return stopFullAuto(id,stage,'The hiring company is not named in the job description. Enter it on the job in Resume Manager (click its company), then click Full auto again.');
+      posting = {...posting, company};
       await command({action:'sendResume',id,job:{company:String(posting.company || '').trim(),title:String(posting.title || '').trim(),description}});
       const receipt = (await getRun(id)).resumeReceipt || {};
       return {message:receipt.manualSend || receipt.sendUnconfirmed
@@ -612,10 +682,10 @@ async function fullAutoResumeReady(id,matched) {
   const run = await getRun(id);
   if (!run.fullAuto?.active) return {message:'Full auto stopped.'};
   if (!(await request(jobPath(id))).files) {
-    if (!run.pendingResumeResponse) return stopFullAuto(id,'resume','The resume reply could not be read.');
+    if (!run.pendingResumeResponse) return stopFullAuto(id,'resume','The resume reply could not be read.',{failed:true});
     if (!matched) return stopFullAuto(id,'resume',"ChatGPT's reply could not be matched to this job for certain. Review the resume, then export it.");
     try {await request(jobPath(id)+'/resume',{response:run.pendingResumeResponse});}
-    catch (error) {return stopFullAuto(id,'resume',`The resume could not be exported: ${error.message}`);}
+    catch (error) {return stopFullAuto(id,'resume',`The resume could not be exported: ${error.message}`,{failed:true});}
     await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null});
   }
   return fullAutoContinue(id);
@@ -727,7 +797,7 @@ chrome.windows.onRemoved.addListener(async windowId => {
 });
 // The job description from the posting behind an application-form link, trying each
 // known source in turn (the site's public posting data, then the posting page itself).
-async function postingDescription(link) {
+async function postingDescription(link, {renderIn = null} = {}) {
   for (const source of jdSources(link)) {
     try {
       const res = await fetch(source.url, {headers:{Accept:source.kind === 'page' ? 'text/html' : 'application/json'}, credentials:'omit', signal:AbortSignal.timeout(15000)});
@@ -736,7 +806,27 @@ async function postingDescription(link) {
       if (posting) return {...posting, url:source.kind === 'page' ? source.url : link};
     } catch (_) { /* try the next source */ }
   }
+  // A posting page built by script (ClearCompany) has no text to fetch: open it in a
+  // background tab of the job's window, read it once it has rendered, and close it.
+  if (renderIn != null) for (const source of jdSources(link).filter(item => item.kind === 'page')) {
+    const posting = await renderedPosting(source.url, renderIn).catch(() => null);
+    if (posting) return {...posting, url:source.url};
+  }
   return null;
+}
+async function renderedPosting(url, windowId) {
+  const tab = await chrome.tabs.create({url, windowId, active:false});
+  try {
+    await waitComplete(tab.id);await page(tab.id,'settled').catch(() => {});
+    let found = null;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      found = await page(tab.id,'job').catch(() => null);
+      if (String(found?.description || '').trim().length >= 200) break;
+      await new Promise(resolve => setTimeout(resolve,1500));
+    }
+    const description = String(found?.description || '').trim();
+    return description.length >= 200 ? {title:found.title || '', company:found.company || '', description} : null;
+  } finally {await chrome.tabs.remove(tab.id).catch(() => {});}
 }
 async function openTabs(id, {checkReady = true} = {}) {
   const job = await request(jobPath(id));
@@ -795,6 +885,9 @@ const APP_COMMANDS = {
   },
   ask: id => command({action:'sendAnswers',id}),
   complete: id => command({action:'complete',id,confirmed:true}),
+  fail: id => command({action:'complete',id,confirmed:true,outcome:'failed'}),
+  // Reads ChatGPT's revised resume for review; confirming it replaces the exported one.
+  replaceResume: id => command({action:'readResume',id}),
   details: id => showDetails(id),
   // Brings the job's window to the front with its application tab showing; its Resume Apply
   // window comes up with it.
@@ -836,6 +929,12 @@ function runAppCommands(state) {
 }
 // Start over (from the app): close the job's tabs and details window, stop watching its
 // ChatGPT, forget its run, and tell the app it is done.
+// Chrome keeps a closed tab group as a saved group in your account. Taking the job's tabs out
+// of their group first deletes it, so finished jobs leave no groups behind.
+async function closeJobTabs(tabs) {
+  for (const tab of tabs) await chrome.tabs.ungroup(tab).catch(() => {});
+  await chrome.tabs.remove(tabs).catch(() => {});
+}
 const cleaning = new Set();
 function cleanUpJobs(ids) {
   for (const id of ids) {
@@ -847,7 +946,7 @@ function cleanUpJobs(ids) {
         if (run.chatTabId) await chat(run.chatTabId,'stopResponseWatch').catch(() => {});
         if (run.panelWindowId) await chrome.windows.remove(run.panelWindowId).catch(() => {});
         const tabs = [run.jobTabId, run.chatTabId, run.panelTabId].filter(Number.isInteger);
-        if (tabs.length) await chrome.tabs.remove(tabs).catch(() => {});
+        if (tabs.length) await closeJobTabs(tabs);
         await (runWrites = runWrites.then(async () => {
           const current = await runs();delete current[id];await chrome.storage.session.set({runs:current});
           const {runAnchors={}} = await chrome.storage.local.get('runAnchors');delete runAnchors[id];await chrome.storage.local.set({runAnchors});
@@ -882,7 +981,7 @@ function startWatcher() {
   })();
 }
 
-async function scanQuestions(id,{fillOutcomes=null,auto=false}={}) {
+async function scanQuestions(id,{fillOutcomes=null,auto=false,openForm=true}={}) {
   const run = await getRun(id);await requireReady(run);
   // The form may hold the user's own corrections: keep them before reading it again.
   await harvestAnswers(id,run).catch(()=>{});
@@ -895,6 +994,11 @@ async function scanQuestions(id,{fillOutcomes=null,auto=false}={}) {
     warning = ' Some embedded frames could not be accessed; complete those fields manually or open the form directly.';
   }
   const fields = results.flatMap(result => (result.result && result.result.fields || []).map(field => ({...field,localId:field.id,id:`${result.frameId}:${field.id}`,frameId:result.frameId,pageUrl:result.result.url,site:result.result.site})));
+  // Still on the posting (no form yet, and none read before): open the application behind its
+  // Apply button or tab, then read that. Never after a form was read, so a confirmation page's
+  // "Apply" links to other jobs are left alone.
+  if(openForm && !(run.fields || []).length && fields.length<2 && !fields.some(field=>field.type==='file') && await openApplicationForm(id,run))
+    return scanQuestions(id,{fillOutcomes,auto,openForm:false});
   if(run.responseMonitor?.kind==='answers')await chat(run.chatTabId,'stopResponseWatch').catch(()=>{});
   // Same page rescanned: keep what was already asked and answered for each question.
   const carried=carryPageState(run,fields);
@@ -963,7 +1067,7 @@ async function command(message) {
     const previous=(await runs())[id];
     if(previous?.chatTabId)await chat(previous.chatTabId,'stopResponseWatch').catch(()=>{});
     if(previous?.responseMonitor)await saveRun(id,{responseMonitor:{...previous.responseMonitor,status:'cancelled'}});
-    await request(jobPath(id) + '/complete',{confirmed:true});
+    await request(jobPath(id) + '/complete',{confirmed:true,...(['submitted','failed'].includes(message.outcome) ? {outcome:message.outcome} : {})});
     // Its tabs are done with: close the job's application tab, its ChatGPT tab and its
     // Resume Apply window. Only these, so other tabs sharing the window stay; an empty
     // window closes by itself. Done last, since the request may come from that window.
@@ -971,7 +1075,7 @@ async function command(message) {
       const tabs = [previous.jobTabId, previous.chatTabId].filter(Number.isInteger);
       setTimeout(() => {
         if (previous.panelWindowId) chrome.windows.remove(previous.panelWindowId).catch(() => {});
-        if (tabs.length) chrome.tabs.remove(tabs).catch(() => {});
+        if (tabs.length) closeJobTabs(tabs);
       }, 300);
     }
     return {message:"Application marked ended in Resume Manager. Its tabs are closed."};
@@ -986,7 +1090,9 @@ async function command(message) {
     await requireReady(run);
     const found = await page(run.jobTabId,'job');
     // An application-form link: read the job's description from its posting instead.
-    const posting = await postingDescription((await chrome.tabs.get(run.jobTabId)).url || found.url).catch(() => null);
+    const jobTab = await chrome.tabs.get(run.jobTabId);
+    const thin = String(found?.description || '').trim().length < 200;
+    const posting = await postingDescription(jobTab.url || found.url, {renderIn:thin ? jobTab.windowId : null}).catch(() => null);
     if (!posting) return {job:found};
     return {job:{...found, title:posting.title || found.title, company:posting.company || found.company, description:posting.description, descriptionSource:posting.url},
       message:'This page is the application form, so the job description was read from the job posting. Check it before sending.'};
@@ -1008,14 +1114,20 @@ async function command(message) {
     else {
       const result=await readResumeJson(run,detail.resumePrompt);
       response=resumeResponse(result.response);
+      // A revised resume replaces the exported one: always shown for review first.
+      if(detail.files) {
+        await saveRun(id,{pendingResumeResponse:response,pendingResumeUrl:result.url});
+        return {needsResumeConfirmation:true,responsePreview:response,message:"This is ChatGPT's latest resume. Review it, then confirm to replace the exported resume (PDF and DOCX)."};
+      }
       if(!result.matched) {
         await saveRun(id,{pendingResumeResponse:response,pendingResumeUrl:result.url});
         return {needsResumeConfirmation:true,responsePreview:response,message:'The response is ready, but automatic request matching was unavailable. Review the resume below and confirm it belongs to this job before exporting.'};
       }
     }
-    const job=await request(jobPath(id)+'/resume',{response});
-    await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null,...(run.responseMonitor?.kind==='resume'?{responseMonitor:{...run.responseMonitor,status:'ready'}}:{})});
-    return {job,message:'PDF, DOCX, and JD.txt exported by Resume Manager.'};
+    const job=await request(jobPath(id)+'/resume',{response,...(detail.files?{replace:true}:{})});
+    // A replaced resume is uploaded again on the form, over the old file.
+    await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null,...(detail.files?{resumeUploadedUrl:null,resumeReplaced:true}:{}),...(run.responseMonitor?.kind==='resume'?{responseMonitor:{...run.responseMonitor,status:'ready'}}:{})});
+    return {job,message:detail.files?'Resume replaced with the revised one. Auto-fill uploads it on the form next time.':'PDF, DOCX, and JD.txt exported by Resume Manager.'};
   }
   if (action === 'scan') return scanQuestions(id);
   if (action === 'saveAnswers') {
@@ -1093,7 +1205,7 @@ async function command(message) {
 }
 chrome.runtime.onMessage.addListener((message,sender,respond) => {
   if(message.event==='page-submitting'){rememberSubmitted(message,sender).catch(()=>{});return false;}
-  if(message.event==='chat-response-ready' || message.event==='chat-response-timeout'){collectMonitoredResponse(message,sender).then(respond,error=>respond({error:error.message}));return true;}
+  if(message.event==='chat-response-ready' || message.event==='chat-response-timeout' || message.event==='chat-response-error'){collectMonitoredResponse(message,sender).then(respond,error=>respond({error:error.message}));return true;}
   if (!sender.url || !sender.url.startsWith(chrome.runtime.getURL('panel.html'))) return false;
   const key = ['detail','pollAnswers'].includes(message.action) ? message.action+':'+message.id : message.id || message.action;
   if(message.action==='pollAnswers' && locks.has(key)) {

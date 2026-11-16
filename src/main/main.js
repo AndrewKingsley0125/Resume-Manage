@@ -958,8 +958,14 @@ async function exportPdf(args) {
   let fileName = safePathSegment(fileNameRaw.replace(/\.pdf$/i, '')) + '.pdf';
   if (fileName === '.pdf') fileName = 'resume.pdf';
 
-  const companyFolder = path.join(saveFolder, company);
-  const existingCompanyFolder = findExistingCompanyFolder(saveFolder, company);
+  // Replacing a job's resume writes into the folder it already has, directly inside the
+  // save folder, instead of creating a new one.
+  const replaceRaw = (args && typeof args.replaceIn === 'string') ? args.replaceIn : '';
+  const replaceIn = replaceRaw && path.dirname(path.resolve(replaceRaw)) === path.resolve(saveFolder)
+    && fs.existsSync(replaceRaw) && fs.statSync(replaceRaw).isDirectory() ? path.resolve(replaceRaw) : '';
+  if (replaceRaw && !replaceIn) return { error: 'The resume folder for this job no longer exists. Start the job over to export again.', code: 'REPLACE_FOLDER_MISSING' };
+  const companyFolder = replaceIn || path.join(saveFolder, company);
+  const existingCompanyFolder = replaceIn ? null : findExistingCompanyFolder(saveFolder, company);
   if (existingCompanyFolder) {
     return {
       error: duplicateCompanyMessage(company, existingCompanyFolder),
@@ -976,8 +982,10 @@ async function exportPdf(args) {
   let win;
   let folderCreated = false;
   try {
-    fs.mkdirSync(companyFolder, { recursive: false });
-    folderCreated = true;
+    if (!replaceIn) {
+      fs.mkdirSync(companyFolder, { recursive: false });
+      folderCreated = true;
+    }
 
     fs.writeFileSync(tmpFile, html, 'utf-8');
 
@@ -1288,7 +1296,7 @@ app.whenReady().then(async () => {
     statePath: path.join(app.getPath('userData'), 'extension-bridge.json'),
     getProfiles: readProfiles,
     buildPrompt,
-    exportResume: async (profile, response, job) => {
+    exportResume: async (profile, response, job, {replace = false} = {}) => {
       const resume = Resume.parse(response, profile);
       const company = job.company || resume.company;
       if (!company || !company.trim()) return {error:'Enter the hiring company before exporting.'};
@@ -1299,6 +1307,7 @@ app.whenReady().then(async () => {
         companyName: company,
         fileName: 'resume.pdf',
         jd: job.jd, profileId: profile.id, resumeData: resume, style: job.style,
+        ...(replace && job.files && job.files.folder ? {replaceIn: job.files.folder} : {}),
       });
       if (result.error) return result;
       return {resume, files:result};
@@ -1317,6 +1326,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('extension:assign', (_event, args) => extensionBridge.assign(args.profileId, args.url, args.connectionId, args.style));
   ipcMain.handle('extension:command', (_event, args) => extensionBridge.command(args.profileId, args.jobId, args.action));
   ipcMain.handle('extension:reset', (_event, args) => extensionBridge.reset(args.profileId, args.jobId));
+  ipcMain.handle('extension:setCompany', (_event, args) => extensionBridge.setCompany(args.profileId, args.jobId, args.company));
 
   ipcMain.handle('prompt:generate', (_event, profileId) => {
     const profile = readProfiles().find(p => p.id === profileId);

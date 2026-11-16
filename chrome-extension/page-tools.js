@@ -1,6 +1,30 @@
 (() => {
-  const version=21;
+  const version=23;
   if (globalThis.ResumeApplyPage && globalThis.ResumeApplyPage.version===version) return;
+  // Controls you changed yourself on this page (real clicks and keys; the extension's own
+  // fills are not counted). Kept across newer copies of these tools.
+  const touched=globalThis.ResumeApplyTouched ||= new WeakSet();
+  if(!globalThis.ResumeApplyTouchListening) {
+    globalThis.ResumeApplyTouchListening=true;
+    for(const name of ['input','change'])document.addEventListener(name,event=>{if(event.isTrusted && event.target instanceof Element)touched.add(event.target);},true);
+  }
+  // The control still shows what the page started with and you have not changed it: a
+  // site default, such as a dropdown that opens on a real option, is not an answer.
+  function preset(el,members,type) {
+    members=members || [];
+    if(touched.has(el) || members.some(member=>touched.has(member)))return false;
+    if(type==='select' || type==='multiselect') {
+      if(el.tagName!=='SELECT' || !el.selectedOptions.length)return false;
+      const chosen=[...el.selectedOptions],defaults=[...el.options].filter(option=>option.defaultSelected);
+      // With no option marked as the default, the browser shows the first one.
+      return defaults.length?chosen.length===defaults.length && chosen.every(option=>option.defaultSelected):chosen.length===1 && el.selectedIndex===0;
+    }
+    if(type==='radio' || type==='checkbox') {
+      if(!members.length || !members.every(member=>member.matches('input')))return false;
+      return members.some(member=>member.checked) && members.every(member=>member.checked===member.defaultChecked);
+    }
+    return false;
+  }
   const text = el => (el ? el.innerText || el.textContent || '' : '').replace(/\s+/g, ' ').trim();
   const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const query = selectors => selectors.map(s => document.querySelector(s)).find(Boolean);
@@ -92,9 +116,13 @@
   // Stops at another control (a previous question) or a page/section heading.
   function precedingText(el) {
     for(let node=el,depth=0;node && depth<4 && !node.matches('form,body');node=node.parentElement,depth++) {
+      let nearest=true;
       for(let prev=node.previousSibling;prev;prev=prev.previousSibling) {
         if(prev.nodeType===3){const value=prev.textContent.replace(/\s+/g,' ').trim();if(value)return value;continue;}
         if(prev.nodeType!==1 || prev.matches('script,style,template,button,'+popupSelector) || !visible(prev))continue;
+        // A small heading right above the field is its question (Breezy); a section title is not.
+        if(nearest && prev.matches('h3,h4,h5,h6') && !prev.querySelector(questionControls)){const value=text(prev);if(value)return value.length<=500?value:'';}
+        nearest=false;
         if(prev.matches('h1,h2,h3,'+questionControls) || prev.querySelector(questionControls))return '';
         const value=text(prev);
         if(value)return value.length<=500?value:'';
@@ -114,13 +142,15 @@
     const isOption=node=>members.some(member=>node.contains(member) || [...(member.labels || [])].includes(node));
     let group=members[0].parentElement;
     while(group && !members.every(member=>group.contains(member)))group=group.parentElement;
+    const common=members.length>1?group:null;
     for(let depth=0;group && depth<4 && !group.matches('form,body');group=group.parentElement,depth++) {
       if([...group.querySelectorAll(questionControls)].some(control=>!belongs(control)))break;
       const title=[...group.querySelectorAll('legend,.application-label,.ashby-application-form-question-title,.question-title,label')].find(node=>!isOption(node) && text(node));
       const name=ariaName(group) || (title ? ownText(title) : '');
       if(name)return cleanLabel(name);
     }
-    return cleanLabel(precedingText(members[0].closest('label') || members[0]));
+    // Text beside the first choice, else above the box holding every choice (Gem).
+    return cleanLabel(precedingText(members[0].closest('label') || members[0]) || (common && precedingText(common)) || '');
   }
   let scanned = new Map(), scanUrl = '', scanId = '';
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -136,8 +166,13 @@
   const comboInput=el=>el.matches('input,textarea')?el:el.querySelector('input:not([type="hidden"]),textarea');
   // Oracle Candidate Experience exposes dropdown choices as a grid of cells,
   // not listbox options. Restrict grid support to its selection-menu markup.
-  const popupSelector='[role="listbox"],.cx-select__list';
-  const optionSelector='[role="option"],[role="gridcell"].cx-select__list-item';
+  // Menus opened from a plain button (Gem's "Please select") list menu items instead.
+  const popupSelector='[role="listbox"],[role="menu"],menu,.cx-select__list';
+  const optionSelector='[role="option"],[role="menuitem"],[role="menuitemradio"],[role="gridcell"].cx-select__list-item';
+  // A button that only says "Please select" is a dropdown waiting for a choice.
+  const placeholderText=/^(?:please )?(?:select|choose)(?: (?:one|an? option|an? answer|from list))?(?:\.\.\.|…)?$/i;
+  const menuButton=el=>el.tagName==='BUTTON' && !comboInput(el);
+  const menuButtonValue=el=>placeholderText.test(text(el))?'':text(el);
   const observedLists=new WeakMap();
   function comboLists(el) {
     const input=comboInput(el);
@@ -303,18 +338,43 @@
       if(input)field.inputHints=Object.fromEntries(Object.entries({placeholder:input.getAttribute('placeholder'),autocomplete:input.getAttribute('autocomplete'),inputMode:input.getAttribute('inputmode'),pattern:input.getAttribute('pattern'),maxLength:input.maxLength>0?input.maxLength:null}).filter(([,value])=>value!=null && value!==''));
       if ((type === 'radio' || type === 'checkbox') && members.length > 1) {field.label = groupLabel(members) || el.name || field.label;if(labelStarred)field.required=true;}
       field.answered=['radio','checkbox'].includes(type)?members.some(member=>member.checked===true || member.getAttribute('aria-checked')==='true' || member.getAttribute('aria-pressed')==='true'):type==='file'?el.files?.length>0:type==='combobox'?!!(comboInput(el)?.value || singleValue(el) || multiValues(el).length):!!String(el.value || '').trim();
+      field.preset=field.answered && preset(el,members,type);
       const scannedLabel=field.label;
       if(type==='file') {
         // The label on the input is often just "Attach"; the question is on its group.
         const groupName=el.closest('[role="group"][aria-labelledby]') && ariaName(el.closest('[role="group"][aria-labelledby]'));
         if(groupName){field.label=cleanLabel(groupName);if(labelStarred)field.required=true;}
+        // A drop zone's own text is an instruction ("Drop or select (.pdf)"); the field's name is
+        // linked to it for screen readers instead (Rippling: "R\u00e9sum\u00e9").
+        const owner=!groupName && /^(?:drop|drag|select|choose|upload|browse|attach|click)\b/i.test(field.label) && el.closest('[aria-labelledby]');
+        const ownerName=owner && ariaName(owner).replace(/\btotal \d+ files? selected\b/ig,'').trim();
+        if(ownerName){field.label=cleanLabel(ownerName);if(labelStarred)field.required=true;}
       }
-      if(type==='file'){field.accept=el.accept || '';field.resumeUpload=/resume|r[e\u00e9]sum[e\u00e9]|\bcv\b|curriculum vitae/i.test(field.label+' '+field.name+' '+el.id) && !/cover.?letter|portfolio/i.test(field.label+' '+field.name);}
-      const manualOnly = (type==='file' && !field.resumeUpload) || ['password','unsupported'].includes(type) || /\bsignature\b|\bcertif(?:y|ication)\b|\bconsent\b|\bagree\b|\battest\b|\bterms\b|\bprivacy (?:policy|notice)\b|\bcaptcha\b/i.test(field.label);
+      // Test ids name the upload when its text does not ("input-resume", "cover_letter").
+      const testIds=type==='file'?[el,el.closest('label')].map(node=>node?.getAttribute('data-testid') || '').join(' '):'';
+      if(type==='file'){field.accept=el.accept || '';field.resumeUpload=/resume|r[e\u00e9]sum[e\u00e9]|\bcv\b|curriculum vitae/i.test(field.label+' '+field.name+' '+el.id+' '+testIds) && !/cover.?letter|portfolio/i.test(field.label+' '+field.name+' '+testIds);}
+      // Upload widgets often clear the input once the file is sent and show its name instead,
+      // so a resume you (or the site) already attached is seen by its file name next to the field.
+      if(field.resumeUpload && !field.answered) {
+        const area=el.closest('.file-upload,[role="group"],fieldset,.form-group') || el.parentElement;
+        field.answered=/(?:^|[\s"'(])\w[\w\-()]*\.(?:pdf|docx?|rtf|odt)\b/i.test(area?.innerText || '');
+      }
+      // Only the question itself counts: "Are you employed by X? By answering Yes, I consent to
+      // texts..." asks about employment, while "Do you consent to ...?" is yours to answer.
+      const question = /^[^?]{8,}\?/.exec(field.label)?.[0] || field.label;
+      const manualOnly = (type==='file' && !field.resumeUpload) || ['password','unsupported'].includes(type) || /\bsignature\b|\bcertif(?:y|ication)\b|\bconsent\b|\bagree\b|\battest\b|\bterms\b|\bprivacy (?:policy|notice)\b|\bcaptcha\b/i.test(question) || /consent|signature|agree|terms/i.test(field.name);
       field.manualOnly = manualOnly;
       scanned.set(id, {el, members, field, label:type==='file'?scannedLabel:field.label});
       fields.push(field);
       members.forEach(member => handled.add(member));
+    }
+    // Choices without a name (Gem) belong together when they share a small container.
+    function namelessGroup(el, type) {
+      for (let node=el.parentElement, depth=0; node && depth<3 && node!==root; node=node.parentElement, depth++) {
+        const group=[...node.querySelectorAll(`input[type="${type}"]`)].filter(m => !m.name && !handled.has(m));
+        if (group.length>1) return group;
+      }
+      return [el];
     }
     for (const el of root.querySelectorAll(scanSelector)) {
       const custom=el.getAttribute('role')==='combobox' || el.hasAttribute('aria-autocomplete');
@@ -327,9 +387,11 @@
         if (members.length) add(el,'radio',members,members.map(text));
         continue;
       }
+      // The hidden checkbox behind button choices (Ashby's Yes / No) is read through its buttons.
+      if (type === 'checkbox' && el.parentElement?.querySelector(':scope > button[data-option]')) continue;
       if (['checkbox','radio'].includes(type)) {
         const container = el.closest('fieldset,[role="group"],.application-question,.ashby-application-form-field-entry') || el.form || root;
-        const members = [...container.querySelectorAll('input')].filter(m => m.type === type && (el.name ? m.name === el.name : m === el));
+        const members = el.name ? [...container.querySelectorAll('input')].filter(m => m.type === type && m.name === el.name) : namelessGroup(el, type);
         add(el,type,members,members.map(m => [...(m.labels || [])].map(text).join(' ') || m.value));
       } else if (type === 'select') {
         add(el,el.multiple ? 'multiselect' : type,[el],[...el.options].filter(o => o.value && !o.disabled).map(o => text(o)));
@@ -356,6 +418,19 @@
         scanned.get(field.id).label = field.label;
       }
     }
+    // Dropdowns drawn as a plain button that opens a floating menu (Gem's "Please select").
+    // A button found once is remembered, so it is still read after a choice replaces its text.
+    for (const button of root.querySelectorAll('button')) {
+      if (handled.has(button) || !visible(button) || button.disabled || siteFurniture(button) || button.closest(popupSelector)) continue;
+      const popup=button.getAttribute('aria-haspopup');
+      if (!button.hasAttribute('data-resume-apply-menu') && !placeholderText.test(text(button)) && !['listbox','menu'].includes(popup)) continue;
+      if (button.closest('[role="combobox"]') || button.parentElement?.querySelector('input:not([type="hidden"]),select,textarea')) continue;
+      if (button.type==='submit' && button.form && !popup) continue;
+      button.setAttribute('data-resume-apply-menu','');
+      add(button,'combobox',[button],[]);
+      const field=fields[fields.length-1];
+      field.controlKind='button-menu';field.answerFormat='single';field.allowFreeText=false;field.answered=!!menuButtonValue(button);
+    }
     // Several boxes under one label (Address: street / city) differ by placeholder.
     const sameLabel=new Map();
     for(const field of fields)if(!['radio','checkbox'].includes(field.type))sameLabel.set(field.label,(sameLabel.get(field.label) || 0)+1);
@@ -364,6 +439,15 @@
       if(sameLabel.get(field.label)>1 && hint && hint.toLowerCase()!==field.label.toLowerCase())field.label=`${field.label} - ${hint}`;
     }
     return {scanId,url:scanUrl,adapter:adapter[1],site:adapter[1]!=='generic'?adapter[1]:location.hostname.replace(/^www\./,''),fields};
+  }
+  // A choice drawn as a button, such as Ashby's Yes / No, is often a <button> without a type,
+  // which HTML treats as a submit button. One that carries a choice's state is clicked, and
+  // any form submission that click would start is stopped. A plain submit button is never clicked.
+  const choiceButton=member=>member.hasAttribute('aria-pressed') || member.hasAttribute('data-option') || member.matches('[role="radio"],[role="checkbox"],[role="option"],[role="switch"]');
+  function clickChoice(member) {
+    const stop=event=>{if(userSubmit(event))return;event.preventDefault();event.stopImmediatePropagation();};
+    window.addEventListener('submit',stop,true);
+    try {member.click();} finally {window.removeEventListener('submit',stop,true);}
   }
   function setValue(el, value) {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -687,6 +771,7 @@
     if(field.type==='file')return true;
     if(field.type==='combobox') {
       const input=comboInput(el);
+      if(menuButton(el))return !!menuButtonValue(el);
       return field.answerFormat==='multiple' || !input || !!normalized(input.value || singleValue(el));
     }
     if(field.type==='select' || field.type==='multiselect') {
@@ -719,14 +804,14 @@
       if(field.answerFormat==='multiple') {
         const labels=multiValues(el);
         value=labels.length?labels:listOptions(observedLists.get(el) || []).filter(option=>option.getAttribute('aria-selected')==='true').map(text);
-      } else value=singleValue(el) || input?.value || (!input && el.getAttribute('data-value')) || '';
+      } else value=singleValue(el) || input?.value || (!input && el.getAttribute('data-value')) || (menuButton(el)?menuButtonValue(el):'');
     } else value=el.value;
     if(Array.isArray(value))return value.length?value:null;
     return String(value ?? '').trim() || null;
   }
   function values() {
     if(!samePage())throw new Error('The application page changed.');
-    return {scanId,values:[...scanned].map(([id,entry])=>({id,value:currentValue(entry)}))};
+    return {scanId,values:[...scanned].map(([id,entry])=>({id,value:currentValue(entry),preset:entry.el.isConnected && preset(entry.el,entry.members || [],entry.field.type)}))};
   }
   async function fillOne(item) {
       const entry = scanned.get(item.id);
@@ -760,11 +845,11 @@
         } else if (field.type === 'radio' || field.type === 'checkbox') {
           const answers = [].concat(item.answer);const labels = field.options;
           if (answers.some(a => !labels.includes(a))) throw new Error('Choose an exact option.');
+          if (members.some(member => member.tagName === 'BUTTON' && member.type === 'submit' && !choiceButton(member))) throw new Error('This option may submit the form. Choose it manually.');
           for (let i=0;i<members.length;i++) {
             const member = members[i], desired = answers.includes(labels[i]);
-            if (member.tagName === 'BUTTON' && (member.type || 'submit') === 'submit') throw new Error('This option may submit the form. Choose it manually.');
             const checked = member.checked === true || member.getAttribute('aria-checked') === 'true' || member.getAttribute('aria-pressed') === 'true';
-            if (field.type === 'radio' ? desired && !checked : desired !== checked) member.click();
+            if (field.type === 'radio' ? desired && !checked : desired !== checked) clickChoice(member);
           }
         } else {
           focusControl(el);setValue(el,String(item.answer));blurControl(el);
@@ -830,7 +915,12 @@
     const onScreen=el=>{const box=el.getBoundingClientRect();return visible(el) && box.width>30 && box.height>30 && box.bottom>0 && box.right>0;};
     const captcha='iframe[src*="recaptcha/api2/bframe"],iframe[src*="recaptcha/enterprise/bframe"],iframe[src*="recaptcha/api2/anchor"]:not([src*="size=invisible"]),iframe[src*="recaptcha/enterprise/anchor"]:not([src*="size=invisible"]),iframe[src*="hcaptcha.com"],iframe[src*="challenges.cloudflare.com"]';
     if([...document.querySelectorAll(captcha)].some(onScreen))return {kind:'captcha',message:'Solve the CAPTCHA on the page. Auto-fill will continue by itself.'};
-    if([...document.querySelectorAll('input[type="password"]')].some(visible))return {kind:'login',message:'This site needs an account. Sign in or create one on the page. Auto-fill will continue by itself.'};
+    // A sign-in screen: a password box with little else to fill. A long form that also asks for
+    // a password (account creation inside the application, iCIMS after you signed in) is not one.
+    if([...document.querySelectorAll('input[type="password"]')].some(visible)) {
+      const others=[...document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="search"]),select,textarea')].filter(el=>visible(el) && !el.closest('header,nav,footer'));
+      if(others.length<=3)return {kind:'login',message:'This site needs an account. Sign in or create one on the page. Auto-fill will continue by itself.'};
+    }
     if(/security code|verification code|enter the code|one[- ]time (?:pass)?code|code (?:was |has been )?sent/i.test(document.body?.innerText || '')) {
       const hint=input=>[input.name,input.id,input.placeholder,input.getAttribute('aria-label'),input.autocomplete,input.labels?.[0]?.innerText].join(' ');
       if([...document.querySelectorAll('input:not([type="hidden"])')].some(input=>visible(input) && /\bcode\b|otp|verif|one.?time/i.test(hint(input))))return {kind:'verification-code',message:'Enter the code the site sent you. Auto-fill will continue by itself.'};
@@ -843,6 +933,34 @@
     const buttons=[...document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"]')].filter(button=>visible(button) && !button.disabled && button.getAttribute('aria-disabled')!=='true' && !button.closest('header,nav,footer,[id*="cookie" i],[class*="cookie" i]'));
     if(buttons.some(button=>/\b(?:submit|send application|finish|complete application)\b|^apply(?: now)?$/i.test(name(button))))return null;
     return buttons.find(button=>/^(?:next|next step|next page|continue|save (?:and|&) continue|save (?:and|&) next|review)$/i.test(name(button).trim())) || null;
+  }
+  // A posting whose form sits behind a button or tab: "Apply now" (Rippling), the Application
+  // tab (Ashby). Asked for only when the page shows no application form yet. Never a button
+  // that could submit a form, and never "Apply with LinkedIn / Indeed".
+  function openApplication() {
+    if(/(^|\.)ashbyhq\.com$/.test(location.hostname)) {
+      const parts=location.pathname.split('/').filter(Boolean);
+      if(parts.length===2) {
+        const target=`${location.origin}/${parts.map(encodeURIComponent).join('/')}/application${location.search}`;
+        setTimeout(()=>location.assign(target),50);
+        return {clicked:'Application',url:target};
+      }
+    }
+    const name=el=>(text(el) || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g,' ').trim();
+    const usable=el=>visible(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true' && el.getAttribute('data-disabled')!=='true' && !el.closest('footer,[id*="cookie" i],[class*="cookie" i]')
+      && !(el.closest('form')?.querySelector('input:not([type="hidden"]),textarea,select'));
+    const controls=[...document.querySelectorAll('a[href],button,[role="button"],[role="tab"],input[type="button"]')].filter(usable);
+    const wanted=[/^apply(?: now| for this (?:job|position|role)| to (?:this )?(?:job|position|role))?!?$/i,/^(?:start|begin|continue) (?:your |my |the )?application$/i,/^(?:application|apply here)$/i,/^i'?m interested$/i];
+    for(const pattern of wanted) {
+      const control=controls.find(el=>pattern.test(name(el)));
+      if(!control)continue;
+      if(control.matches('a[href]') && /^(?:javascript:|#$)/i.test(control.getAttribute('href') || '') && !control.onclick)continue;
+      const clicked=name(control),url=control.matches('a[href]')?control.href:'';
+      // After returning, because the click can replace this page.
+      setTimeout(()=>clickChoice(control),50);
+      return {clicked,url};
+    }
+    return null;
   }
   function clickNext() {
     const button=nextButton();
@@ -883,5 +1001,5 @@
       if(button && /\b(?:submit|send application|apply|finish)\b/i.test(text(button) || button.value || ''))globalThis.ResumeApplyReport?.();
     },true);
   }
-  globalThis.ResumeApplyPage = {version,job, scan, fill, values, settled,discoverOptions,blocker,clickNext,uploadFinished};
+  globalThis.ResumeApplyPage = {version,job, scan, fill, values, settled,discoverOptions,blocker,clickNext,openApplication,uploadFinished};
 })();

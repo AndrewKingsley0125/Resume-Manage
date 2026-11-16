@@ -51,8 +51,24 @@ test('answers about the applicant are saved per site in the site wording; job-sp
   assert.equal(byId.ns1,'University of California - Berkeley');assert.equal(byId.nd1,MASTERS);assert.equal(byId.ng,'Male');
   assert.equal(byId.ns2,undefined,'the second education block has its own answer');
   assert.equal(recalled.fields.find(field=>field.id==='ns1').fillMode,'search');
-  // An edited profile makes the old answers stale.
-  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,education:[]})).answers,[]);
+  // Editing one part of the profile forgets only the answers that rest on it.
+  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,education:[]})).answers,[{id:'ng',answer:'Male'}]);
+  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{gender:'Woman'}})).answers.map(item=>item.id).sort(),['nd1','ns1','ny1']);
+  // Adding an unrelated detail (travel) forgets nothing.
+  assert.equal(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{...tonyProfile.applicationDetails,travelDetails:'Up to 25%'}})).answers.length,4);
+});
+
+test('answers saved before per-topic fingerprints are still reused until the profile changes',async()=>{
+  const {recallSiteAnswers,siteAnswerCount,profileBasis}=await core;
+  // The whole-profile fingerprint the book had, from before the three common answers existed.
+  const source=JSON.stringify([tonyProfile.firstName,tonyProfile.lastName,tonyProfile.location,tonyProfile.education,{gender:'Man'}]);
+  let hash=5381;for(let i=0;i<source.length;i++)hash=(hash*33^source.charCodeAt(i))>>>0;
+  const book={basis:hash.toString(36),answers:{'select|gender#0':{answer:'Male',label:'Gender'}},seen:{}};
+  const withDefaults={...tonyProfile,applicationDetails:{gender:'Man',answerPrompt:'x',availableToStart:'Immediately',howDidYouHear:'LinkedIn',appliedBefore:'No'}};
+  const fields=[{id:'g',label:'Gender',type:'select',options:['Male','Female']}];
+  assert.deepEqual(recallSiteAnswers(fields,book,profileBasis(withDefaults)).answers,[{id:'g',answer:'Male'}]);
+  assert.equal(siteAnswerCount(book,profileBasis(withDefaults)),1);
+  assert.deepEqual(recallSiteAnswers(fields,book,profileBasis({...withDefaults,location:'Boston'})).answers,[]);
 });
 
 test('other questions are saved only after two jobs on the site got the same answer',async()=>{

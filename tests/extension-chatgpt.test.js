@@ -36,7 +36,7 @@ function editor({draft='',sendButton=false,ignoreClick=false,renderText=value=>v
       return [];
     },
       createRange:()=>({selectNodeContents(){}}),
-      execCommand(command,ui,body){commands++;composer.innerText=renderText(body);composer.textContent=storedText(body);return true;}}
+      execCommand(command,ui,body){commands++;const value=command==='delete'?'':body;composer.innerText=renderText(value);composer.textContent=storedText(value);return true;}}
   });
   vm.runInContext(source,context);
   return {send:context.ResumeApplyChat.send,watch:context.ResumeApplyChat.watchResponse,state:context.ResumeApplyChat.responseState,composer,assistant,notifications,
@@ -78,10 +78,12 @@ test('ChatGPT automatically submits through Enter if its send button ignores the
   assert.equal(chat.composer.innerText,'');
 });
 
-test('ChatGPT preserves unrelated unsent drafts',async()=>{
-  const chat=editor({draft:'My unfinished message'});
-  await assert.rejects(chat.send('Question prompt'),/unsent draft/);
-  assert.equal(chat.composer.innerText,'My unfinished message');
+test('ChatGPT clears a leftover draft before sending, so only the prompt is sent',async()=>{
+  const chat=editor({draft:'My unfinished message',sendButton:true});
+  const receipt=await chat.send('Question prompt');
+  assert.equal(receipt.sendUnconfirmed,undefined);
+  assert.ok(chat.user.textContent.startsWith('Question prompt'));
+  assert.ok(!chat.user.textContent.includes('My unfinished message'));
   assert.equal(chat.pasted,'');
 });
 

@@ -215,11 +215,37 @@ test('each job keeps a short history of what happened, for its card in the app',
   await s.send('/v1/jobs/'+job.id+'/progress',{text:'Needs you: solve the CAPTCHA on the job page',level:'attention',key:'waiting-on-page'},one.token);
   await s.send('/v1/jobs/'+job.id+'/progress',{text:'Needs you: solve the CAPTCHA on the job page',level:'attention',key:'waiting-on-page'},one.token);
   await s.send('/v1/jobs/'+job.id+'/command-result',{commandId:queued.id,ok:false,message:'The page could not be read.'},one.token);
-  await s.send('/v1/jobs/'+job.id+'/complete',{confirmed:true},one.token);
+  await s.send('/v1/jobs/'+job.id+'/complete',{confirmed:true,outcome:'submitted'},one.token);
   const events = s.bridge.dashboard('p1').jobs.find(j => j.id === job.id).events;
   assert.deepEqual(events.map(e => e.text),['Sent to Work Chrome','Job window opened','You started: Auto-fill','Needs you: solve the CAPTCHA on the job page','Auto-fill: The page could not be read.','Marked ended']);
   assert.deepEqual(events.map(e => e.level),['info','info','info','attention','error','info']);
   assert.ok(events.every(e => typeof e.at === 'number'));
+});
+
+test('a job whose resume failed ends as Failed with its reason; one that went through ends as Ended', async t => {
+  const s = await service(t), one = await s.pair('Work Chrome');
+  const failed = s.bridge.assign('p1','https://example.com/job',one.id);
+  await s.send('/v1/jobs/'+failed.id+'/progress',{text:'Needs you: ChatGPT finished, but its reply has no resume JSON (it may have refused).',level:'attention',key:'chatgpt-error'},one.token);
+  assert.match(s.bridge.dashboard('p1').jobs.find(j => j.id === failed.id).failure.message,/no resume JSON/);
+  await s.send('/v1/jobs/'+failed.id+'/complete',{confirmed:true},one.token);
+  const ended = s.bridge.dashboard('p1').jobs.find(j => j.id === failed.id);
+  assert.equal(ended.outcome,'failed');assert.match(ended.failure.message,/no resume JSON/);
+  // A Full auto stop that only needs you (no company yet) is not a failure.
+  const asked = s.bridge.assign('p1','https://example.com/job',one.id);
+  await s.send('/v1/jobs/'+asked.id+'/progress',{text:'Needs you: The hiring company is not named in the job description.',level:'attention',key:'full-auto-blocked',stage:'resume'},one.token);
+  assert.equal(s.bridge.dashboard('p1').jobs.find(j => j.id === asked.id).failure,null);
+  await s.send('/v1/jobs/'+asked.id+'/progress',{text:'Needs you: The resume could not be exported: disk full',level:'attention',key:'full-auto-blocked',stage:'resume',failed:true},one.token);
+  assert.match(s.bridge.dashboard('p1').jobs.find(j => j.id === asked.id).failure.message,/disk full/);
+  // The company typed in the app is kept when the JD names none, and the resume uses it.
+  s.bridge.setCompany('p1',asked.id,'Acme Corp');
+  await s.send('/v1/jobs/'+asked.id+'/jd',{description:'Build things. '.repeat(30),company:'',title:'Engineer'},one.token);
+  assert.equal(s.bridge.dashboard('p1').jobs.find(j => j.id === asked.id).company,'Acme Corp');
+  assert.throws(() => s.bridge.setCompany('p1',asked.id,'  '),/Enter the hiring company/);
+  await s.send('/v1/jobs/'+asked.id+'/resume',{response:JSON.stringify({...Resume.seed(profiles[0]),company:'Acme Corp',summary:'Valid summary.'})},one.token);
+  const exported = s.bridge.dashboard('p1').jobs.find(j => j.id === asked.id);
+  assert.equal(exported.failure,null,'a resume exported later clears the failure: '+JSON.stringify([exported.failure,exported.error,exported.status]));
+  await s.send('/v1/jobs/'+asked.id+'/complete',{confirmed:true},one.token);
+  assert.equal(s.bridge.dashboard('p1').jobs.find(j => j.id === asked.id).outcome,'submitted');
 });
 
 test('Start over removes the job and tells its browser to close its tabs and forget it', async t => {

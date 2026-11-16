@@ -272,6 +272,38 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     for(let i=0;i<30 && !bridge.dashboard().jobs.find(j=>j.id===job.id)?.progress?.text;i++)await delay(100);
     assert.ok(bridge.dashboard().jobs.find(j=>j.id===job.id)?.progress?.text,JSON.stringify(bridge.dashboard().jobs));
     console.log('PASS: Auto-fill asks ChatGPT only about the new question, fills the form, and never submits.');
+    // Run again after your own changes: what you typed stays, and only the empty question is asked.
+    await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const form=document.querySelector('#first').form;document.querySelector('#why').value='My own answer';
+      for(const [id,label,value] of [['mine','Question you answered yourself','Typed by me'],['blank2','Another new question','']]){const box=document.createElement('input');box.id=id;box.setAttribute('aria-label',label);box.value=value;form.append(box);}}})`);
+    const again=await evaluate(`chrome.runtime.sendMessage({action:'auto',id:${JSON.stringify(job.id)}})`);assert.equal(again.ok,true,JSON.stringify(again));assert.match(again.message,/Asked ChatGPT 1 question/);
+    for(let attempt=0;attempt<40;attempt++) {
+      await evaluate(`chrome.runtime.sendMessage({action:'pollAnswers',id:${JSON.stringify(job.id)}})`);
+      autoRun=(await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run;
+      if(!autoRun.autopilot)break;
+      await delay(500);
+    }
+    assert.ok(!autoRun.autopilot,'second auto-fill did not finish');
+    const kept=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},world:'MAIN',func:()=>({submitted:globalThis.submitted,why:document.querySelector('#why').value,mine:document.querySelector('#mine').value,blank2:document.querySelector('#blank2').value,first:document.querySelector('#first').value,resumes:document.querySelector('#resume').files.length})})`);
+    assert.deepEqual({...kept[0].result,blank2:!!kept[0].result.blank2},{submitted:false,why:'My own answer',mine:'Typed by me',blank2:true,first:'Fixture',resumes:1});
+    console.log('PASS: Auto-fill run again keeps answers you typed yourself and only asks about empty questions.');
+    // A dropdown that opens on a real option is the site's default, not an answer: it is asked.
+    // One moved off its default is kept.
+    await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const form=document.querySelector('#first').form;
+      for(const [id,label,options,value] of [['start','Preferred start date',['Immediately','In a month'],null],['shift','Preferred shift',['Day','Night'],'Night']]){const select=document.createElement('select');select.id=id;select.setAttribute('aria-label',label);for(const option of options)select.append(new Option(option,option));if(value)select.value=value;form.append(select);}}})`);
+    const defaults=await evaluate(`chrome.runtime.sendMessage({action:'auto',id:${JSON.stringify(job.id)}})`);assert.equal(defaults.ok,true,JSON.stringify(defaults));assert.match(defaults.message,/Asked ChatGPT 1 question/);
+    for(let attempt=0;attempt<40;attempt++) {
+      await evaluate(`chrome.runtime.sendMessage({action:'pollAnswers',id:${JSON.stringify(job.id)}})`);
+      autoRun=(await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run;
+      if(!autoRun.autopilot)break;
+      await delay(500);
+    }
+    assert.ok(!autoRun.autopilot,'dropdown auto-fill did not finish');
+    const byLabel=label=>autoRun.fields.find(field=>field.label===label);
+    assert.ok(byLabel('Preferred start date').preset && autoRun.askedIds.includes(byLabel('Preferred start date').id),JSON.stringify(byLabel('Preferred start date')));
+    assert.ok(!byLabel('Preferred shift').preset && !autoRun.askedIds.includes(byLabel('Preferred shift').id),JSON.stringify(byLabel('Preferred shift')));
+    const shift=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const value=document.querySelector('#shift').value;document.querySelector('#start').remove();document.querySelector('#shift').remove();return value;}})`);
+    assert.equal(shift[0].result,'Night');
+    console.log("PASS: a dropdown still on the site's default is answered; one moved off its default is kept.");
     // A multi-page form: Auto-fill clicks Next, then answers the next page by itself.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const form=document.querySelector('#first').form;form.querySelectorAll('button,input[type=submit]').forEach(control=>control.remove());const next=document.createElement('button');next.type='button';next.id='next-page';next.textContent='Next';next.onclick=()=>{next.remove();const box=document.createElement('input');box.id='second';box.setAttribute('aria-label','Second page question');form.append(box);};form.append(next);}})`);
     const multi=await evaluate(`chrome.runtime.sendMessage({action:'auto',id:${JSON.stringify(job.id)}})`);assert.equal(multi.ok,true,JSON.stringify(multi));

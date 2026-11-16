@@ -1,5 +1,5 @@
 (() => {
-  const version = 13;
+  const version = 14;
   if (globalThis.ResumeApplyChat && globalThis.ResumeApplyChat.version === version) return;
   globalThis.ResumeApplyChat?.stopResponseWatch?.();
   const visible = el => !!el && el.getClientRects().length > 0;
@@ -130,13 +130,29 @@
     const readyUntil = Date.now() + 10000;
     do {composer = findComposer();if (composer) break;await pause(100);} while (Date.now() < readyUntil);
     if (!composer) throw new Error('ChatGPT composer not found. Sign in or finish any verification, then retry.');
-    const existing = editorCharacters(composerText(composer));
+    let existing = editorCharacters(composerText(composer));
     const requestBody = marker => prompt + '\n\nRequest reference: ' + marker + '. Do not include this reference in your response.';
     // A failed insertion check used to lose the receipt. Recover only our exact
     // complete prompt so retrying can submit it without replacing another draft.
     const recoveredMarker = composerValues(composer).map(value => String(value || '').match(/Request reference: (RM-[\w-]+)\. Do not include this reference in your response\.\s*$/)?.[1]).find(Boolean);
     const marker = previousReceipt && composerMatches(composer,requestBody(previousReceipt.marker)) ? previousReceipt.marker : recoveredMarker;
-    if (existing && (!marker || !composerMatches(composer,requestBody(marker)))) throw new Error('ChatGPT has an unsent draft. Send or clear it before continuing.');
+    if (existing && (!marker || !composerMatches(composer,requestBody(marker)))) {
+      // A leftover draft (ChatGPT restores one per conversation) would be sent along with the
+      // prompt: clear it first.
+      composer.focus();
+      if (composer.tagName === 'TEXTAREA') {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(composer,'');
+        composer.dispatchEvent(new Event('input',{bubbles:true}));
+      } else {
+        const selection = window.getSelection(), range = document.createRange();
+        range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);
+        document.execCommand('delete',false);
+      }
+      await pause(250);
+      composer = findComposer() || composer;
+      if (editorCharacters(composerText(composer))) throw new Error('ChatGPT has an unsent draft that could not be cleared. Clear it in the ChatGPT tab, then retry.');
+      existing = 0;
+    }
     const receipt = existing && previousReceipt?.marker === marker ? previousReceipt : {baseline:assistantMessages().length, previous:messageText(assistantMessages().at(-1)), marker:existing ? marker : 'RM-' + crypto.randomUUID(),sentAt:Date.now(),responseBaseline:responseSnapshot().signature};
     const body = prompt + '\n\nRequest reference: ' + receipt.marker + '. Do not include this reference in your response.';
     if (!existing) {
@@ -220,8 +236,25 @@
     return {...responseSnapshot(),generating:generating(),requestMatched:!!matchingRequest(receipt),
       draftPending:!!receipt?.marker && !!composer && composerValues(composer).some(value=>String(value || '').includes(receipt.marker))};
   }
+  // ChatGPT's own failure in place of a reply ("Something went wrong while generating the
+  // response", "Network error"), and the Retry button it offers with it.
+  const ERROR_TEXT = /something went wrong|error (?:occurred|generating|while generating)|network error|request (?:timed out|failed)|conversation not found|unable to load|too many requests|hit your limit|reached (?:your|the) (?:limit|usage cap)/i;
+  function chatError() {
+    const user = userMessages().at(-1);
+    if (!user) return null;
+    const after = node => follows(user,node) && !userContent(node) && visible(node);
+    const roots = pageRoots();
+    const message = roots.flatMap(root => [...root.querySelectorAll('[class*="text-red" i],[class*="error" i],[role="alert"],[data-testid*="error" i]')])
+      .filter(after).map(node => (node.innerText || '').replace(/\s+/g,' ').trim()).find(value => value && value.length < 400 && ERROR_TEXT.test(value));
+    if (!message) return null;
+    const retry = roots.flatMap(root => [...root.querySelectorAll('button,[role="button"]')]).filter(after)
+      .find(button => !button.disabled && /^(?:retry|try again|regenerate)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim()));
+    return {message, retry};
+  }
   async function readCandidate() {
     if (generating()) throw new Error('ChatGPT is still generating. Wait, then read again.');
+    const failed = chatError();
+    if (failed) throw new Error(`ChatGPT showed an error instead of a reply: ${failed.message}`);
     const response = candidateResponse();
     await pause(750);
     if (generating() || candidateResponse() !== response) throw new Error('Response is still changing. Wait and read again.');
@@ -303,7 +336,17 @@
       if(responseWatch!==watch || watch.notifying)return;
       const snapshot=responseSnapshot();
       if(snapshot.signature!==watch.signature){watch.signature=snapshot.signature;watch.changedAt=Date.now();}
-      if(generating() || !snapshot.present || Date.now()-watch.changedAt<1800)return;
+      if(generating())return;
+      // ChatGPT's own error: press its Retry, twice at most, then hand the job back.
+      const failed=chatError();
+      if(failed) {
+        if(Date.now()-watch.changedAt<1800)return;
+        if(failed.retry && (watch.retries || 0)<2){watch.retries=(watch.retries || 0)+1;failed.retry.click();watch.changedAt=Date.now();return;}
+        watch.notifying=true;
+        chrome.runtime.sendMessage({event:'chat-response-error',id,kind,marker:receipt.marker,text:failed.message.slice(0,300)}).catch(()=>{});
+        stopResponseWatch();return;
+      }
+      if(!snapshot.present || Date.now()-watch.changedAt<1800)return;
       if(!snapshot.afterUser && (!receipt.responseBaseline || snapshot.signature===receipt.responseBaseline))return;
       if(!matchingRequest(receipt) && (!receipt.responseBaseline || snapshot.signature===receipt.responseBaseline))return;
       watch.notifying=true;

@@ -54,10 +54,13 @@ export function optionAnswer(field, answer) {
   });
   return matches.some(x => x === null) ? null : multiple ? [...new Set(matches)] : matches[0];
 }
+// The question up to its question mark: fine print after it ("By answering Yes, I consent to
+// texts") does not make the question itself a consent.
+const questionPart = label => /^[^?]{8,}\?/.exec(label || '')?.[0] || label || '';
 const manualQuestion = /\bsignature\b|\bcertif(?:y|ication)\b|\bconsent\b|\bagree\b|\battest\b|\bterms\b|\bprivacy (?:policy|notice)\b|\bcaptcha\b/i;
 export function answerableQuestions(fields) {
   return fields.filter(field=>!['file','password','hidden','button','submit','reset','image'].includes(field.type)
-    && (!field.manualOnly || field.type==='unsupported') && !manualQuestion.test(field.label || ''));
+    && (!field.manualOnly || field.type==='unsupported') && !manualQuestion.test(questionPart(field.label)));
 }
 function answerFormat(field) {
   const options=Array.isArray(field.options)?field.options:[];
@@ -268,7 +271,7 @@ export function runProgress(run={}) {
   if(run.fullAuto?.active)return {text:run.fullAuto.stage==='resume'?'Full auto: preparing the resume':'Full auto: opening the job pages',level:'busy',key:'full-auto'};
   if(run.pendingResumeResponse)return {text:'Needs you: review the resume ChatGPT wrote',level:'attention',key:'confirm-resume'};
   // Full auto stopped at a step that needs you; that step is back in your hands.
-  if(run.fullAutoBlocker?.message)return {text:`Needs you: ${run.fullAutoBlocker.message}`,level:'attention',key:'full-auto-blocked',stage:run.fullAutoBlocker.stage};
+  if(run.fullAutoBlocker?.message)return {text:`Needs you: ${run.fullAutoBlocker.message}`,level:'attention',key:'full-auto-blocked',stage:run.fullAutoBlocker.stage,...(run.fullAutoBlocker.failed?{failed:true}:{})};
   if(run.needsSiteAccess)return {text:"Needs you: grant site access in the job's Resume Apply window",level:'attention',key:'site-access'};
   if(run.autoOpenError)return {text:`Needs you: ${run.autoOpenError}`,level:'attention',key:'open-error'};
   // ChatGPT's answers (or ones already known) that have not been put on the form yet.
@@ -277,22 +280,49 @@ export function runProgress(run={}) {
   if(run.autoSummary?.text)return {text:run.autoSummary.text,level:run.autoSummary.needsYou?'attention':'idle',key:'auto-finished'};
   return {text:'',level:'idle',key:''};
 }
+// Saved answers depend on profile facts. Each answer keeps a fingerprint of only the facts
+// its topic uses, so editing one part of the profile (education) forgets only the answers
+// that rest on it (School, Degree) and keeps the rest (Gender, How did you hear about us).
+const hashOf=value=>{const source=JSON.stringify(value ?? null);let hash=5381;for(let i=0;i<source.length;i++)hash=(hash*33^source.charCodeAt(i))>>>0;return hash.toString(36);};
+const BASIS_TOPICS=[
+  ['education',/\b(?:school|university|college|institution|degree|discipline|major|field of study|start date year|end date year|graduation|gpa)\b/,profile=>profile.education],
+  ['demographics',/\b(?:gender|sex|pronouns?|race|ethnicity|hispanic|latin[oax]|veteran|military|disability|disabled|transgender|sexual orientation)\b/,(profile,details)=>['gender','genderDescription','hispanicLatino','race','veteranStatus','disabilityStatus'].map(key=>details[key])],
+  ['eligibility',/\b(?:authori[sz]ed|authori[sz]ation|eligible|sponsorship|visa|citizen(?:ship)?)\b/,(profile,details)=>['workAuthorization','authorizedToWork','sponsorshipNow','sponsorshipFuture','country'].map(key=>details[key])],
+  ['agreements',/\b(?:non ?compete|non ?solicit\w*|agreement|restrict\w*)\b/,(profile,details)=>['restrictiveEmployerAgreement','restrictiveEmployerAgreementDetails','hiringCompanyCompetitorOfRecentEmployer'].map(key=>details[key])],
+  ['source',/\b(?:hear|find|learn)\b/,(profile,details)=>details.howDidYouHear],
+  ['address',/\b(?:address|city|zip|postal code|country|state|province|location)\b/,(profile,details)=>[profile.location,...['address1','address2','city','state','postalCode','country'].map(key=>details[key])]],
+];
+// Profiles saved before these three answers existed hashed without them.
+const NEW_DETAILS=['availableToStart','howDidYouHear','appliedBefore'];
 export function profileBasis(profile={}) {
   const details={...profile.applicationDetails};delete details.answerPrompt;
-  const source=JSON.stringify([profile.firstName,profile.lastName,profile.location,profile.education,details]);
-  let hash=5381;for(let i=0;i<source.length;i++)hash=(hash*33^source.charCodeAt(i))>>>0;
-  return hash.toString(36);
+  const legacy={...details};for(const key of NEW_DETAILS)if(legacy[key]===({availableToStart:'Immediately',howDidYouHear:'LinkedIn',appliedBefore:'No'})[key])delete legacy[key];
+  const parts=[['other',hashOf([profile.firstName,profile.lastName])],...BASIS_TOPICS.map(([name,,facts])=>[name,hashOf(facts(profile,details))])];
+  return `v2;${parts.map(part=>part.join(':')).join(';')};legacy:${hashOf([profile.firstName,profile.lastName,profile.location,profile.education,legacy])}`;
 }
+// The fingerprint an answer to this question depends on. A plain string (tests, or a basis
+// from before topics existed) is the whole fingerprint.
+function topicBasis(basis,label) {
+  const text=String(basis || '');
+  if(!text.startsWith('v2;'))return text;
+  const parts=Object.fromEntries(text.split(';').slice(1).map(part=>part.split(':')));
+  const topic=BASIS_TOPICS.find(([,pattern])=>pattern.test(norm(label)))?.[0] || 'other';
+  return parts[topic] || '';
+}
+const legacyBasis=basis=>String(basis || '').startsWith('v2;')?/;legacy:([^;]*)$/.exec(basis)?.[1] || '':String(basis || '');
+// Whether a saved answer still fits the profile: by its own topic fingerprint, or, saved
+// before topics existed, by the whole-profile fingerprint the book had then.
+const entryCurrent=(book,entry,basis)=>entry.basis!==undefined?entry.basis===topicBasis(basis,entry.label):book.basis===legacyBasis(basis);
 export function learnSiteAnswers(book,fields,values,{jobId='unknown',company='',basis='',now=Date.now()}={}) {
-  const current=book && book.basis===basis?book:{basis,answers:{},seen:{}};
-  const answers={...current.answers},seen={...current.seen},keys=siteKeys(fields);
+  const kept=Object.entries(book?.answers || {}).filter(([,entry])=>entryCurrent(book,entry,basis)).map(([key,entry])=>[key,{...entry,basis:topicBasis(basis,entry.label)}]);
+  const answers=Object.fromEntries(kept),seen={...(book?.seen || {})},keys=siteKeys(fields);
   const byId=new Map(values.map(item=>[item.id,item.value])),contact=new Set(profileAnswers(fields).fixed),named=norm(company);
   let saved=0;
   for(const field of answerableQuestions(fields)) {
     const value=byId.get(field.id);
     if(value==null || value==='' || Array.isArray(value) && !value.length || contact.has(field.id) || !savable(field,named))continue;
     const key=keys.get(field.id);
-    const entry={answer:value,label:field.label,savedAt:now,...Object.fromEntries(keptProps.filter(name=>field[name]!==undefined).map(name=>[name,field[name]]))};
+    const entry={answer:value,label:field.label,savedAt:now,basis:topicBasis(basis,field.label),...Object.fromEntries(keptProps.filter(name=>field[name]!==undefined).map(name=>[name,field[name]]))};
     if(STABLE_QUESTION.test(norm(field.label))){if(!same(answers[key]?.answer,value))saved++;answers[key]=entry;continue;}
     if(typeof value==='string' && value.length>120)continue;
     const jobs=Object.entries({...seen[key],[jobId]:value}).slice(-10);
@@ -303,11 +333,11 @@ export function learnSiteAnswers(book,fields,values,{jobId='unknown',company='',
   return {book:{basis,answers,seen},saved};
 }
 export function recallSiteAnswers(fields,book,basis) {
-  if(!book || book.basis!==basis)return {fields,answers:[]};
+  if(!book)return {fields,answers:[]};
   const keys=siteKeys(fields),answerable=new Set(answerableQuestions(fields).map(field=>field.id)),answers=[];
   const restored=fields.map(field=>{
     const entry=answerable.has(field.id) && book.answers?.[keys.get(field.id)];
-    if(!entry)return field;
+    if(!entry || !entryCurrent(book,entry,basis))return field;
     const props=Object.fromEntries(keptProps.filter(name=>entry[name]!==undefined && field[name]===undefined).map(name=>[name,entry[name]]));
     const next={...field,...props},answer=optionAnswer(next,entry.answer);
     if(answer==null)return field;
@@ -316,7 +346,7 @@ export function recallSiteAnswers(fields,book,basis) {
   });
   return {fields:restored,answers};
 }
-export function siteAnswerCount(book,basis) {return book && book.basis===basis?Object.keys(book.answers || {}).length:0;}
+export function siteAnswerCount(book,basis) {return book?Object.values(book.answers || {}).filter(entry=>entryCurrent(book,entry,basis)).length:0;}
 
 export function mergeGeneratedAnswers(fields,generated) {
   const answerable=new Set(answerableQuestions(fields).map(field=>field.id));
@@ -423,6 +453,7 @@ export function answersPrompt(job, fields, allFields = fields) {
     personalContext(job.profile,asked).education?"personalInfo.education is in form order: the first School, Degree and Discipline questions are the first entry, the next ones the second. Match each to the closest choice for its level and field, such as Master's Degree for Master of Science.":'',
     hasLongDropdowns?'allowsCustomValue true means a long dropdown: return the full common name of the choice, such as United States or Stanford University, without abbreviations.':'',
     separatePhoneCode?'formContext.separatePhoneCountryCode is true: match the phone prefix to a country-code choice and give the national number without that prefix in the Phone Number field.':'',
+    /\bif (?:yes|no|so|applicable)\b|\bif you (?:answered|selected|checked) (?:yes|no)\b|\bif (?:you )?(?:have|did|were|are)\b.{0,80}\b(?:please )?(?:provide|describe|explain|list|specify)\b/i.test(labels)?'A follow-up that applies only to a particular answer of another question ("If yes to the previous question, please provide details") is answered "N/A" when that answer does not apply. Never null.':'',
     /relative|family|related to|connection/i.test(labels)?'A saved No for company connections also means No for a narrower relatives question; a saved Yes does not prove which connection exists.':'',
     /tax.?credit|wotc|work opportunity/i.test(labels)?'Do not use one negative fact to answer a multi-condition tax-credit question.':'',
     hasChoices?'For answerFormat single or multiple, choose ONLY from that question\'s options array, matching by meaning (Man can be Male), and return the option id: one id for single, an array of ids for multiple ([] means none). Never return option text or invent an id. Return null if optionsStatus is unavailable, or if it is partial and nothing fits.':'',

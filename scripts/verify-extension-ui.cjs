@@ -111,10 +111,10 @@ app.whenReady().then(async () => {
     const wrong = await chat.webContents.executeJavaScript(`ResumeApplyChat.read(${JSON.stringify(receipt)}).catch(e=>e.message)`);
     assert.match(wrong,/could not be matched/);
     console.log('PASS: ChatGPT prompt insertion, Send, completed-response reading, and wrong-exchange rejection against a local fixture.');
-    await chat.webContents.executeJavaScript('document.querySelector("textarea").value="Keep my draft"');
-    const draftError = await chat.webContents.executeJavaScript('ResumeApplyChat.send("Another prompt").catch(e=>e.message)');
-    assert.match(draftError,/unsent draft/);
-    assert.equal(await chat.webContents.executeJavaScript('document.querySelector("textarea").value'),'Keep my draft');
+    // A leftover draft is cleared, so it is not sent along with the prompt.
+    await chat.webContents.executeJavaScript('document.querySelector("textarea").value="Leftover draft"');
+    const cleared = await chat.webContents.executeJavaScript(`ResumeApplyChat.send("Another prompt").then(()=>[...document.querySelectorAll('[data-message-author-role="user"]')].at(-1).textContent).catch(e=>"ERR "+e.message)`);
+    assert.ok(cleared.startsWith('Another prompt') && !cleared.includes('Leftover draft'),cleared);
     await chat.webContents.executeJavaScript(`(()=>{
       const old=document.querySelector('textarea');old.value='';old.id='hidden-legacy';old.dataset.id='root';old.style.display='none';
       const editor=document.createElement('div');editor.id='prompt-textarea';editor.contentEditable='true';editor.className='ProseMirror';editor.style.whiteSpace='pre-wrap';editor.innerHTML='<p><br></p>';
@@ -305,7 +305,7 @@ app.whenReady().then(async () => {
     // Reopen, details and end sit in the card's menu, closed until asked for.
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
-    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Start over,Mark ended');
+    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Start over,Mark ended,Mark failed');
     // Clicking elsewhere closes it.
     await manager.webContents.executeJavaScript('document.querySelector("#extension-job-count").click()');
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
