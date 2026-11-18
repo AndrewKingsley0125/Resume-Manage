@@ -951,7 +951,9 @@
     const ta = $('resume-prompt');
     ta.value = text;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
-    showToast('Resume prompt created using the latest default rules and profile');
+    showToast(profile.resumePromptMode === 'custom' && (profile.customResumePrompt || '').trim()
+      ? 'Resume prompt created from your custom prompt'
+      : 'Resume prompt created using the latest default rules and profile');
   }
 
   function renderHtml() {
