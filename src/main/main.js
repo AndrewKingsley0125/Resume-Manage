@@ -1298,8 +1298,11 @@ app.whenReady().then(async () => {
     buildPrompt,
     exportResume: async (profile, response, job, {replace = false} = {}) => {
       const resume = Resume.parse(response, profile);
-      const company = job.company || resume.company;
-      if (!company || !company.trim()) return {error:'Enter the hiring company before exporting.'};
+      // The folder is named after the company ChatGPT's resume JSON targets; the name read from
+      // the job page (often just the URL's subdomain) is only a fallback.
+      const named = String(resume.company || '').trim();
+      const company = safePathSegment(named) ? named : String(job.company || '').trim();
+      if (!company) return {error:'Enter the hiring company before exporting.'};
       resume.company = company;
       const result = await exportPdf({
         html: renderExtensionResume(profile, resume, job.style),
@@ -1324,7 +1327,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('extension:rotateCode', (_event, profileId) => extensionBridge.rotateCode(typeof profileId === 'string' ? profileId : undefined));
   ipcMain.handle('extension:unlink', (_event, id) => extensionBridge.unlink(id));
   ipcMain.handle('extension:assign', (_event, args) => extensionBridge.assign(args.profileId, args.url, args.connectionId, args.style));
-  ipcMain.handle('extension:command', (_event, args) => extensionBridge.command(args.profileId, args.jobId, args.action));
+  ipcMain.handle('extension:command', (_event, args) => extensionBridge.command(args.profileId, args.jobId, args.action, {response:args.response}));
   ipcMain.handle('extension:reset', (_event, args) => extensionBridge.reset(args.profileId, args.jobId));
   ipcMain.handle('extension:setCompany', (_event, args) => extensionBridge.setCompany(args.profileId, args.jobId, args.company));
 

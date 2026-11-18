@@ -408,6 +408,11 @@
               <button class="ext-tab inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="done">Ended <span id="ext-count-done" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
             </div>
             <div class="ext-toolbar-actions flex items-center gap-2">
+              <label class="toggle-switch m-0" title="On: Full auto stops after ChatGPT writes the resume so you can check or edit it, and carries on after you confirm. Off: it exports the resume and goes straight on to the application.">
+                <input type="checkbox" id="extension-review-resume" />
+                <span class="toggle-track"></span>
+                <span class="toggle-label text-[13px]">Review resume in Full auto</span>
+              </label>
               <span class="muted small"><span id="extension-job-count">0</span> links</span>
               <button id="extension-links-edit" class="btn btn-primary btn-sm" type="button">+ Add links</button>
               <button id="extension-links-clear" class="btn btn-ghost btn-sm" type="button" title="Remove links that are not open in Chrome">Clear not sent</button>
@@ -680,6 +685,22 @@
               + Add certification
             </button>
           </div>
+
+          <fieldset class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
+            <div class="form-section-header mb-2.5 flex items-center justify-between gap-3"><h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Resume prompt</h3></div>
+            <div class="profile-mode-options flex flex-wrap gap-3">
+              <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2.5 has-[:checked]:border-accent has-[:checked]:bg-accent-ring"><input class="accent-accent" type="radio" name="profile-resume-prompt-mode" id="resume-prompt-profile" value="profile" checked /> Generated from profile</label>
+              <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2.5 has-[:checked]:border-accent has-[:checked]:bg-accent-ring"><input class="accent-accent" type="radio" name="profile-resume-prompt-mode" id="resume-prompt-custom" value="custom" /> Custom prompt</label>
+            </div>
+            <p class="muted small mb-0 mt-3">Generated builds the prompt from the built-in template and the profile above. Custom uses your own prompt as written.</p>
+            <div id="custom-resume-prompt-field" class="hidden">
+              <label class="field full mb-2 mt-4 flex flex-col gap-3">
+                <span class="field-label m-0 block">Custom resume prompt</span>
+                <p id="custom-resume-prompt-help" class="muted small m-0">Used exactly as written. Optional placeholders: {{CANDIDATE_PROFILE}} is replaced with this profile's candidate info; [PASTE THE JOB DESCRIPTION HERE] marks where Auto mode inserts the JD (otherwise it is appended at the end).</p>
+                <textarea id="custom-resume-prompt" class="field-input min-h-[150px] resize-y rounded-lg bg-elev p-4 leading-normal" rows="10" aria-describedby="custom-resume-prompt-help" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </fieldset>
 
           <div class="form-section mb-3 mt-[18px] border-t border-line pt-3.5">
             <div class="form-section-header mb-2.5 flex items-center justify-between gap-3"><h3 class="m-0 text-sm font-semibold tracking-[0.2px]">Application details</h3></div>
@@ -988,6 +1009,8 @@
         <div id="resume-review-body" class="modal-body resume-review-body min-h-0 flex-1 py-1 pl-0 pr-2 leading-[1.55]"></div>
         <div class="resume-review-actions mt-2.5 flex shrink-0 items-center gap-2 border-t border-line pt-3.5">
           <button id="resume-review-details" class="btn btn-ghost" type="button" title="Open this job's Resume Apply window in Chrome to read or edit it there">Show in Chrome</button>
+          <button id="resume-review-edit" class="btn btn-ghost" type="button" title="Change any part of the resume JSON, or paste a whole new one">Edit JSON</button>
+          <button id="resume-review-undo" class="btn btn-ghost" type="button" hidden>Undo my edits</button>
           <span class="resume-review-spacer flex-1"></span>
           <button class="btn btn-ghost" data-review-close type="button">Not now</button>
           <button id="resume-review-confirm" class="btn btn-primary" type="button">Confirm &amp; export</button>

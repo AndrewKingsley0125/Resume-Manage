@@ -31,7 +31,9 @@
 <button data-step="sendResume" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Send to ChatGPT</button></details>
 <div id="replace-resume-tools" hidden><p class="hint my-3.5 text-[13px] text-muted">Asked ChatGPT for changes? Once its revised resume has finished, use it in place of the exported one. You review it first.</p><button data-step="readResume" id="replace-resume" class="secondary max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Use ChatGPT's revised resume</button></div>
 <section id="resume-response-review" hidden><h3 class="my-[1em] text-[1.17em] font-bold">Review collected resume</h3><p id="resume-response-target" class="my-3.5 text-muted"></p>
-<label class="mb-2">Resume JSON<textarea id="resume-response-preview" rows="10" readonly></textarea></label>
+<label class="mb-2">Resume JSON <span class="text-muted">(you can edit any part of it, or paste a whole new one)</span><textarea id="resume-response-preview" rows="14" spellcheck="false"></textarea></label>
+<button id="reset-resume-response" type="button" class="secondary mb-2" hidden>Undo my edits</button>
+<label id="review-company-row" class="mb-2" hidden>Company name needed <span class="text-muted">(neither the job nor the resume names it; it names the export folder)</span><input id="review-company" type="text" maxlength="120" placeholder="Acme Inc." autocomplete="off"></label>
 <label class="check mb-2 flex items-center gap-2.5"><input type="checkbox" id="approve-resume-response"> This is the correct resume for this job.</label>
 <button id="confirm-resume-response" class="max-[520px]:mb-1.5 max-[520px]:w-full max-[520px]:whitespace-normal max-[520px]:[overflow-wrap:anywhere]">Export resume files</button></section>
 <details id="saved-files-details" class="mt-4"><summary>Saved files</summary><pre id="files" class="my-3.5 whitespace-pre-wrap text-[#b8cbff] [overflow-wrap:anywhere]"></pre></details>

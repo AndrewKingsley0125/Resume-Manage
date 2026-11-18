@@ -44,6 +44,25 @@ test('full prompt preserves revised instructions and injects profile only', () =
   // No sample candidate's facts leak into another profile's prompt.
   for(const forbidden of ['{{CANDIDATE_PROFILE}}','Tony Zhao','Snowflake','TruEra','Ejenta','Berkeley']) assert.ok(!prompt.includes(forbidden),forbidden);
 });
+test('optional employer roles appear in the candidate info only when supplied', () => {
+  const withRole={...profile,workHistory:[{...profile.workHistory[0],role:'Staff Platform Engineer'},{company:'No Role Co',period:'2018 - 2020'}]};
+  const prompt=buildPrompt(withRole);
+  assert.ok(prompt.includes('- Example $& Employer — Staff Platform Engineer, Chicago, Contract, Remote, 2020 - 2026'));
+  assert.ok(prompt.includes('- No Role Co — 2018 - 2020'));
+  // An emptied role is not replaced by a legacy title.
+  assert.ok(buildPrompt({...profile,workHistory:[{company:'X',title:'Old',role:'',period:'2020'}]}).includes('- X — 2020'));
+});
+test('custom resume prompt replaces the generated prompt when selected', () => {
+  const custom={...profile,resumePromptMode:'custom',customResumePrompt:'  My prompt\n{{CANDIDATE_PROFILE}}\nEnd  '};
+  const prompt=buildPrompt(custom);
+  assert.ok(prompt.startsWith('My prompt\n**Professional Experience**'));
+  assert.ok(prompt.includes('- Example $& Employer — Chicago'));
+  assert.ok(prompt.endsWith('End'));
+  assert.ok(!prompt.includes('## 1. TASK AND CANDIDATE PROFILE'));
+  assert.equal(buildPrompt({...custom,customResumePrompt:'Just this'}),'Just this');
+  // Not selected, or left empty: the generated prompt is used.
+  for(const p of [{...custom,resumePromptMode:'profile'},{...custom,customResumePrompt:'   '}]) assert.ok(buildPrompt(p).includes('## 1. TASK AND CANDIDATE PROFILE'));
+});
 test('with the switch on, the resume shows the employer names written in the JSON, keeping each job\'s profile dates', () => {
   const p={useJsonEmployerNames:true,workHistory:[
     {company:'Snowflake',period:'May 2024 - Oct 2026',location:'Menlo Park, CA'},

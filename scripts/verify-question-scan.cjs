@@ -112,7 +112,79 @@ const cases=[
     after:`()=>{const result=ResumeApplyPage.openApplication();return new Promise(resolve=>setTimeout(()=>resolve({result,opened}),150));}`,
     check:({after})=>assert.deepEqual(after,{result:{clicked:'Apply now',url:''},opened:1})},
 
-  {name:'custom-styled radios with display:none inputs are found',pending:'hidden choice inputs',
+  {name:"Workday: a 'Select One' button beside its hidden validation box is a dropdown, and it fills",
+    html:`<form><div data-automation-id="formField-sponsorship"><label for="input-7">Will you now or in the future require sponsorship?<abbr>*</abbr></label><div><button type="button" id="input-7" aria-haspopup="listbox" aria-controls="list-7" name="sponsorship" value="">Select One</button><input type="text" aria-hidden="true" tabindex="-1" value=""></div></div>
+      <div data-automation-id="formField-first"><label for="first">First Name</label><input id="first" type="text"></div></form>`,
+    setup:`document.getElementById('input-7').addEventListener('click',()=>{if(document.getElementById('list-7'))return;const list=document.createElement('ul');list.id='list-7';list.setAttribute('role','listbox');list.innerHTML='<li id="o1"><div>Yes</div></li><li id="o2"><div>No</div></li>';document.body.append(list);
+      for(const li of list.querySelectorAll('li'))li.addEventListener('click',()=>{document.getElementById('input-7').textContent=li.textContent;list.remove();});});`,
+    fill:`fields=>[{...fields.find(field=>field.controlKind==='button-menu'),answer:'No'}]`,
+    after:`()=>({shown:document.getElementById('input-7').textContent})`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.controlKind || '',field.label]),[['combobox','button-menu','Will you now or in the future require sponsorship?'],['text','','First Name']]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.equal(after.shown,'No');
+    }},
+  {name:'BambooHR: a menu button over a hidden empty select is the dropdown, and a "file-input" box under "Resume" is the resume upload',
+    html:`<form><div class="fab-FormField"><label for="sel-g">Gender</label><div class="fab-Select"><div style="display:inline-block"><div class="fab-SelectToggle__container"><button id="btn-g" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Gender –Select–"><div class="fab-SelectToggle__placeholder">–Select–</div></button></div></div><select id="sel-g" aria-hidden="true" tabindex="-1" style="position:absolute;width:0;height:0;opacity:0;border:none"><option value=""></option></select></div></div>
+      <div><p>Resume*</p><div data-fabric-component="FileUpload"><div><div><button type="button">Choose File*</button><div><p>No file selected</p></div></div><input type="file" aria-label="file-input" tabindex="-1" required></div><input name="resumeFileId" type="hidden" value=""></div></div></form>`,
+    setup:`const button=document.getElementById('btn-g');button.addEventListener('click',()=>{if(document.getElementById('menu-g'))return;const list=document.createElement('div');list.id='menu-g';list.setAttribute('role','menu');
+      list.innerHTML='<div role="menuitem">Decline to answer</div><div role="menuitem">Male</div><div role="menuitem">Female</div>';document.body.append(list);
+      for(const item of list.children)item.addEventListener('click',()=>{button.firstElementChild.textContent=item.textContent;button.setAttribute('aria-label','Gender '+item.textContent);document.getElementById('sel-g').innerHTML='<option value="3">'+item.textContent+'</option>';list.remove();});});`,
+    fill:`fields=>[{...fields.find(field=>field.controlKind==='button-menu'),answer:'Female'}]`,
+    after:`()=>({shown:document.getElementById('btn-g').textContent})`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.controlKind || '',field.label,!!field.answered,!!field.resumeUpload]),[['combobox','button-menu','Gender',false,false],['file','','Resume',false,true]]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.equal(after.shown,'Female');
+    }},
+  {name:'Workday: a searchable prompt is answered by searching and picking the matching result',
+    html:`<form><div data-automation-id="formField-source"><label for="src">How Did You Hear About Us?</label><div data-automation-id="multiselectInputContainer"><input id="src" type="text" placeholder="Search" data-uxi-widget-type="selectinput" data-uxi-multiselect-id="m1"></div><div id="chosen"></div></div></form>`,
+    setup:`const input=document.getElementById('src');
+      input.addEventListener('keydown',event=>{if(event.key!=='Enter')return;document.getElementById('results')?.remove();const box=document.createElement('div');box.id='results';
+        const all=['LinkedIn','LinkedIn Learning','Indeed','Company Website'].filter(name=>name.toLowerCase().includes(input.value.toLowerCase()));
+        box.innerHTML=all.map(name=>'<div data-uxi-widget-type="multiselectlistitem" data-uxi-multiselect-id="m1"><div data-automation-id="promptOption">'+name+'</div></div>').join('');document.body.append(box);
+        for(const option of box.querySelectorAll('[data-automation-id="promptOption"]'))option.addEventListener('click',()=>{document.getElementById('chosen').innerHTML='<div data-automation-id="selectedItem">'+option.textContent+'</div>';input.value='';box.remove();});});`,
+    fill:`fields=>[{...fields[0],answer:'LinkedIn'}]`,
+    after:`()=>({chosen:document.getElementById('chosen').innerText.trim(),values:ResumeApplyPage.values().values.map(item=>item.value)})`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.controlKind,field.label,field.answerFormat,field.fillMode,field.answered]),[['combobox','workday-prompt','How Did You Hear About Us?','text','search',false]]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.deepEqual(after,{chosen:'LinkedIn',values:['LinkedIn']});
+    }},
+
+  {name:"Workday: a dropdown is found even when its validation box is not marked hidden",
+    html:`<form><div data-automation-id="formField-country"><label for="c1">Country<abbr>*</abbr></label><div><button type="button" id="c1" aria-haspopup="listbox" name="country" value="">Select One</button><input type="text" class="css-77hcv" value=""></div></div></form>`,
+    check:fields=>assert.deepEqual(fields.map(field=>[field.type,field.controlKind,field.label,field.required]),[['combobox','button-menu','Country',true]])},
+  {name:'Workday: a dropdown is named by its label, not by the choice its button shows',
+    html:`<form><div data-automation-id="formField-degree"><label for="d1">Degree<abbr>*</abbr></label><div><button type="button" id="d1" aria-haspopup="listbox" aria-label="Degree Bachelor of Science (B.S) Required">Bachelor of Science (B.S)</button><input type="text" value="x"></div></div>
+      <div data-automation-id="formField-country"><label>Country<abbr>*</abbr></label><div><button type="button" aria-haspopup="listbox" aria-label="Country Select One Required">Select One</button></div></div></form>`,
+    check:fields=>assert.deepEqual(fields.map(field=>[field.label,field.required,field.answered]),[['Degree',true,true],['Country',true,false]])},
+  {name:'Workday: role="checkbox" choices and a date in parts are found under their question',
+    html:`<form><div data-automation-id="formField-disability"><fieldset><legend>Please check one of the boxes below</legend><div role="checkbox" aria-checked="false" tabindex="0">Yes, I have a disability</div><div role="checkbox" aria-checked="false" tabindex="0">No, I do not have a disability</div></fieldset></div>
+      <div data-automation-id="formField-dateSignedOn"><label>Date<abbr>*</abbr></label><div data-automation-id="dateInputWrapper"><input type="text" role="spinbutton" aria-label="Month"><input type="text" role="spinbutton" aria-label="Day"><input type="text" role="spinbutton" aria-label="Year"></div></div></form>`,
+    setup:`for(const box of document.querySelectorAll('[role="checkbox"]'))box.addEventListener('click',()=>box.setAttribute('aria-checked',box.getAttribute('aria-checked')==='true'?'false':'true'));`,
+    fill:`fields=>[{...fields[0],answer:['No, I do not have a disability']}]`,
+    after:`()=>[...document.querySelectorAll('[role="checkbox"]')].map(box=>box.getAttribute('aria-checked'))`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.label]),[['checkbox','Please check one of the boxes below'],['text','Date - Month'],['text','Date - Day'],['text','Date - Year']]);
+      assert.equal(fields[1].required,true);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.deepEqual(after,['false','true']);
+    }},
+  {name:'a contenteditable answer box is filled',
+    html:`<form><div data-automation-id="formField-why"><label id="w">Why do you want this role?</label><div contenteditable="true" aria-labelledby="w"><p><br></p></div></div></form>`,
+    fill:`fields=>[{...fields[0],answer:'I build AI tools.'}]`,
+    after:`()=>ResumeApplyPage.values().values.map(item=>item.value)`,
+    check:({fields,filled,after})=>{
+      assert.deepEqual(fields.map(field=>[field.type,field.label]),[['textarea','Why do you want this role?']]);
+      assert.ok(!filled[0]?.error,JSON.stringify(filled));
+      assert.deepEqual(after,['I build AI tools.']);
+    }},
+  {name:'Greenhouse: "select all that apply" boxes with their own names are one question',
+    html:`<form><fieldset><legend>How do you identify your sexual orientation? Please select all that apply.</legend><div><input type="checkbox" id="a1" name="a1"><label for="a1">Bisexual</label></div><div><input type="checkbox" id="a2" name="a2"><label for="a2">Gay</label></div><div><input type="checkbox" id="a3" name="a3"><label for="a3">I prefer not to answer</label></div></fieldset>
+      <fieldset><legend>Preferences</legend><label><input type="checkbox" name="sms">Text me updates</label><label>Email<input name="email"></label></fieldset></form>`,
+    check:fields=>assert.deepEqual(fields.map(field=>[field.type,field.label,field.options.length]),[['checkbox','How do you identify your sexual orientation? Please select all that apply.',3],['checkbox','Text me updates',1],['text','Email',0]])},
+  {name:'custom-styled radios with display:none inputs are found',
     html:`<form><fieldset><legend>Need sponsorship?</legend><label><input style="display:none" type="radio" name="s" value="y"><span>Yes</span></label><label><input style="display:none" type="radio" name="s" value="n"><span>No</span></label></fieldset></form>`,
     check:fields=>assert.deepEqual(labels(fields),['Need sponsorship?'])},
   {name:'off-screen honeypot inputs are excluded',
@@ -133,7 +205,7 @@ const cases=[
   {name:'boxes sharing a label are told apart by placeholder',
     html:`<form><fieldset><legend>Address</legend><div class="form-group"><label>Address</label><input name="a1" placeholder="Street"></div><div class="form-group"><label>Address</label><input name="a2" placeholder="City"></div></fieldset></form>`,
     check:fields=>assert.deepEqual(labels(fields),['Address - Street','Address - City'])},
-  {name:'non-native controls are scanned',pending:'additional control types',
+  {name:'non-native controls are scanned',
     html:`<form><button type="button" aria-haspopup="listbox" aria-label="Notice period">Select</button><div role="checkbox" aria-checked="false" aria-label="Open to relocation" tabindex="0"></div><div role="textbox" contenteditable="true" aria-label="Cover note"></div></form>`,
     check:fields=>assert.equal(fields.length,3)},
   {name:'inputs inside shadow DOM are scanned',pending:'shadow DOM',

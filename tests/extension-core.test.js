@@ -206,6 +206,9 @@ test('salary rule uses the posted pay, then the defaults',async()=>{
   assert.equal(pay('Pay: $150K to $190K').amount,170000);
   assert.equal(pay('Pay: $150 - $190K').amount,170000);
   assert.equal(pay('Salary: $165,000').text,'$165,000');
+  // iCIMS writes the currency before each figure.
+  assert.equal(pay('USD $151,047.00 - USD $241,653.00 /Yr.').text,'$200,000');
+  assert.equal(pay('$60 USD - $80 USD per hour','hour').text,'$70/hour');
   assert.equal(pay('Hourly rate: $62 - $81 per hour','hour').text,'$75/hour');
   assert.equal(pay('Great team and benefits.').text,'$140,000');
   assert.equal(pay('Great team and benefits.','hour').text,'$70-$80/hour');
@@ -358,6 +361,9 @@ test('an application-form link points to where the same job description can be r
   assert.deepEqual(kinds('https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Senior-Engineer_R123/apply/applyManually'),[
     'workday https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/Remote-USA/Senior-Engineer_R123',
     'page https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Senior-Engineer_R123']);
+  assert.deepEqual(kinds('https://fa-exew-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/10681/apply/email?jr_id=6a5a'),[
+    'oracle https://fa-exew-saasfaprod1.fa.ocs.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById%3BId%3D%2210681%22%2CsiteNumber%3DCX_1',
+    'page https://fa-exew-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/10681']);
   assert.deepEqual(kinds('https://careers.example.com/jobs/123/apply?src=x'),['page https://careers.example.com/jobs/123']);
   // Links that already show the posting are left alone.
   for (const link of ['https://jobs.lever.co/liatrio/dabbe592-d22e-49ef-91a9-b775a3296fdd','https://job-boards.greenhouse.io/babelstreet/jobs/8384370','https://careers.example.com/jobs/123','not a link']) assert.deepEqual(jdSources(link),[],link);
@@ -375,7 +381,13 @@ test('each source is read into a title, company and plain-text description', asy
   assert.equal(ashby.title,'Staff Engineer');
   assert.equal(parseJdSource({kind:'workday'},JSON.stringify({jobPostingInfo:{title:'Senior Engineer',jobDescription:'<p>'+long+'</p>'}})).title,'Senior Engineer');
   const page = parseJdSource({kind:'page'},'<html><head><title>x</title><script type="application/ld+json">{"@type":"JobPosting","title":"Data Engineer","hiringOrganization":{"name":"Acme"},"description":"&lt;p&gt;'+long+'&lt;/p&gt;"}</script></head><body>menu</body></html>');
-  assert.deepEqual([page.title,page.company],['Data Engineer','Acme']);
+  assert.deepEqual([page.title,page.company],['Data Engineer','Acme']);assert.ok(!page.description.includes('<'));
+  // HTML escaped twice (&amp;lt;p&amp;gt;) still comes out as plain text.
+  const twice = parseJdSource({kind:'greenhouse'},JSON.stringify({title:'T',company_name:'C',content:'&amp;lt;p&amp;gt;'+long+'&amp;lt;/p&amp;gt;&amp;lt;ul&amp;gt;&amp;lt;li&amp;gt;Go&amp;lt;/li&amp;gt;&amp;lt;/ul&amp;gt;'}));
+  assert.ok(!/<\/?[a-z]/i.test(twice.description),twice.description);assert.match(twice.description,/\n- Go$/);
+  const {plainJd} = await core;
+  assert.equal(plainJd('<div><p>About the role</p><p>Requires 5+ years &amp; Go.</p></div>'),'About the role\nRequires 5+ years & Go.');
+  assert.equal(plainJd('Salary 3 < 5 > 2, plain text stays as is.'),'Salary 3 < 5 > 2, plain text stays as is.');
   assert.match(parseJdSource({kind:'page'},'<html><head><title>Role</title></head><body><nav>x</nav><main><h1>Role</h1><p>'+long+'</p></main></body></html>').description,/^Role\nBuild reliable/);
   // Too little text, or something that is not the expected data, gives nothing.
   assert.equal(parseJdSource({kind:'lever'},JSON.stringify({text:'T',descriptionPlain:'Short.'})),null);

@@ -149,6 +149,15 @@ test('a job reports what it is doing now, and the app keeps it for its status vi
   assert.equal((await s.send('/v1/jobs/'+job.id+'/progress',{text:'x'},other.token)).status,404);
 });
 
+test('a company entered when exporting is saved on a job that has none', async t => {
+  const s = await service(t), one = await s.pair('One');
+  const job = s.bridge.assign('p1','https://example.com/job',one.id);
+  await s.send('/v1/jobs/'+job.id+'/jd',{company:'',title:'Engineer',description:'Build services.'},one.token);
+  const resume = {...Resume.seed(profiles[0]),company:'',summary:'Valid summary.'};
+  const typed = await s.send('/v1/jobs/'+job.id+'/resume',{response:JSON.stringify(resume),company:'Typed Co'},one.token);
+  assert.equal(typed.status,200,JSON.stringify(typed.body));assert.equal(typed.body.company,'Typed Co');
+});
+
 test('the app sends a job step to its browser, which runs it and reports back', async t => {
   const s = await service(t), one = await s.pair('One'), other = await s.pair('Other');
   const job = s.bridge.assign('p1','https://example.com/job',one.id);
@@ -164,6 +173,13 @@ test('the app sends a job step to its browser, which runs it and reports back', 
   assert.throws(() => s.bridge.command('p1',job.id,'auto'), /already waiting/);
   assert.throws(() => s.bridge.command('p1',job.id,'submit'), /Unknown command/);
   assert.throws(() => s.bridge.command('p2',job.id,'auto'), /not found/);
+  // Confirming a resume can carry the JSON as you edited it in the review; other steps carry nothing.
+  s.bridge.command('p1',job.id,'confirmResume',{response:' {"summary":"Edited"} '});
+  s.bridge.command('p1',job.id,'scan',{response:'ignored'});
+  const withEdit = (await s.send('/v1/state',undefined,one.token)).body.jobs[0].commands;
+  assert.equal(withEdit.find(c => c.action === 'confirmResume').response,'{"summary":"Edited"}');
+  assert.ok(!('response' in withEdit.find(c => c.action === 'scan')));
+  for (const c of withEdit.filter(c => c.action !== 'auto')) await s.send('/v1/jobs/'+job.id+'/command-result',{commandId:c.id,ok:true,message:'Done.'},one.token);
   // Only the job's own browser can report the result.
   assert.equal((await s.send('/v1/jobs/'+job.id+'/command-result',{commandId:queued[0].id,ok:true,message:'Done.'},other.token)).status,404);
   assert.equal((await s.send('/v1/jobs/'+job.id+'/command-result',{commandId:queued[0].id,ok:true,message:'Auto-fill finished.'},one.token)).status,200);

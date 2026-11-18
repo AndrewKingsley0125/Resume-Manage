@@ -5,6 +5,7 @@
   let currentProfile = null;
   let saveLinks = null;
   let editProfile = null;
+  let saveSetting = null;
   let initialized = false;
   let token = 0;
   let pollTimer = null;
@@ -17,6 +18,8 @@
   // The card whose menu is open (kept open across refreshes), and the job under review.
   let openMenuJobId = null;
   let reviewJobId = null;
+  // The review's resume JSON: as ChatGPT wrote it, and as you edited it (null when unchanged).
+  let reviewOriginal = '', reviewEdited = null, reviewEditing = false;
   // History sections the user opened, kept open across refreshes.
   const openHistories = new Set();
   // The six stages of an application, and how far a job has got.
@@ -318,29 +321,96 @@
     if (resume.education.length) {const ul = el('ul', 'my-0 list-disc pl-5');for (const item of resume.education) ul.append(el('li', 'my-[3px]', item.degree));section('Education', ul);}
     return body;
   }
+  const prettyJson = text => {try {return JSON.stringify(JSON.parse(text), null, 2);} catch (_) {return text;}};
+  const reviewText = () => reviewEdited != null ? reviewEdited : reviewOriginal;
   function openReview(job) {
     reviewJobId = job.id;
+    reviewOriginal = prettyJson(job.pendingResume || '');reviewEdited = null;reviewEditing = false;
     $('resume-review-for').textContent = jobName(job);
+    renderReview();
+    $('resume-review').classList.remove('hidden');
+    $('resume-review-confirm').focus();
+  }
+  // Shows the resume as it will be exported, or the JSON to edit: any part of it, or paste
+  // a whole new one.
+  function renderReview() {
     const box = $('resume-review-body');box.replaceChildren();
+    const edit = $('resume-review-edit');
+    if (edit) edit.textContent = reviewEditing ? 'Preview' : 'Edit JSON';
+    const undo = $('resume-review-undo');
+    if (undo) undo.hidden = reviewEdited == null;
+    if (reviewEditing) {
+      box.append(el('p', 'muted small mb-2 mt-0', 'Edit any part of the resume JSON, or replace all of it. Click Preview to check it, then Confirm & export.'));
+      const area = el('textarea', 'review-json h-[calc(100%-3rem)] min-h-[300px] w-full rounded-lg border border-line bg-bg p-3 font-mono text-xs');
+      area.id = 'resume-review-json';area.spellcheck = false;area.value = reviewText();
+      area.addEventListener('input', () => {reviewEdited = area.value.trim() === reviewOriginal.trim() ? null : area.value;if (undo) undo.hidden = reviewEdited == null;});
+      box.append(area);
+      $('resume-review-confirm').disabled = false;
+      return;
+    }
     let resume = null;
-    try {resume = window.App.Resume.parse(job.pendingResume || '', currentProfile);}
+    try {resume = window.App.Resume.parse(reviewText(), currentProfile);}
     catch (error) {
-      box.append(el('p', 'json-error m-0 whitespace-pre-wrap border-t border-danger-line bg-danger-bg px-3.5 py-2.5 font-mono text-[12.5px] text-danger-hover', `This resume cannot be exported as it is: ${error.message} Open it in Chrome to fix it, or ask ChatGPT again.`));
-      if (job.pendingResume) box.append(el('pre', 'review-raw whitespace-pre-wrap rounded-lg border border-line bg-bg p-3 text-xs [overflow-wrap:anywhere]', job.pendingResume));
+      box.append(el('p', 'json-error m-0 whitespace-pre-wrap border-t border-danger-line bg-danger-bg px-3.5 py-2.5 font-mono text-[12.5px] text-danger-hover', `This resume cannot be exported as it is: ${error.message} Click Edit JSON to fix it, or ask ChatGPT again.`));
+      if (reviewText()) box.append(el('pre', 'review-raw whitespace-pre-wrap rounded-lg border border-line bg-bg p-3 text-xs [overflow-wrap:anywhere]', reviewText()));
     }
     if (resume) box.append(reviewContent(resume, currentProfile));
     $('resume-review-confirm').disabled = !resume;
-    $('resume-review').classList.remove('hidden');
     box.scrollTop = 0;
-    $('resume-review-confirm').focus();
   }
-  function closeReview() {reviewJobId = null;const panel = $('resume-review');if (panel && panel.classList) panel.classList.add('hidden');}
+  function closeReview() {
+    if (reviewJobId && reviewEdited != null && typeof confirm === 'function' && !confirm('Discard your edits to this resume?')) return;
+    reviewJobId = null;reviewEdited = null;reviewEditing = false;
+    const panel = $('resume-review');if (panel && panel.classList) panel.classList.add('hidden');
+  }
+  // The same "Company name needed" dialog as manual mode. Resolves with the name, or null.
+  function askCompany() {
+    return new Promise(resolve => {
+      const modal = $('company-modal'), input = $('company-input'), confirmBtn = $('company-confirm');
+      if (!modal || !input || !confirmBtn) {resolve(null);return;}
+      const label = confirmBtn.textContent;
+      confirmBtn.textContent = 'Export resume';
+      input.value = '';input.style.borderColor = '';
+      let settled = false;
+      const finish = value => {
+        if (settled) return;settled = true;
+        modal.classList.add('hidden');confirmBtn.textContent = label;
+        confirmBtn.removeEventListener('click', onConfirm);input.removeEventListener('keydown', onKey);document.removeEventListener('keydown', onEscape, true);
+        modal.querySelectorAll('[data-company-close]').forEach(node => node.removeEventListener('click', onCancel));
+        resolve(value);
+      };
+      const onConfirm = () => {const value = input.value.trim();if (!value) {input.style.borderColor = 'var(--danger)';input.focus();return;}finish(value);};
+      const onCancel = () => finish(null);
+      const onKey = event => {input.style.borderColor = '';if (event.key === 'Enter') {event.preventDefault();onConfirm();}};
+      // Escape closes this dialog only, not the review behind it.
+      const onEscape = event => {if (event.key === 'Escape') {event.stopPropagation();onCancel();}};
+      confirmBtn.addEventListener('click', onConfirm);input.addEventListener('keydown', onKey);document.addEventListener('keydown', onEscape, true);
+      modal.querySelectorAll('[data-company-close]').forEach(node => node.addEventListener('click', onCancel));
+      modal.classList.remove('hidden');
+      setTimeout(() => input.focus(), 0);
+    });
+  }
   async function reviewCommand(action) {
     const job = liveState && liveState.jobs.find(item => item.id === reviewJobId);
     if (!job) {closeReview();return;}
     const active = token;
+    const edited = action === 'confirmResume' && reviewEdited != null ? reviewEdited : null;
+    let resume = null;
+    if (action === 'confirmResume') {
+      // Checked here first, so a mistake is shown while your edits are still open.
+      try {resume = window.App.Resume.parse(edited != null ? edited : reviewOriginal, currentProfile);}
+      catch (error) {if (edited != null) {reviewEditing = false;renderReview();$('extension-dispatch-status').textContent = `Your edited resume can't be exported: ${error.message}`;return;}}
+    }
+    // Neither the job nor the resume names the hiring company: ask for it, as manual mode does.
+    if (resume && !String(job.company || '').trim() && !String(resume.company || '').trim()) {
+      const company = await askCompany();
+      if (!company) return;
+      try {await window.api.extensionSetCompany({profileId:currentProfile.id, jobId:job.id, company});job.company = company;}
+      catch (error) {$('extension-dispatch-status').textContent = error.message;return;}
+    }
     try {
-      await window.api.extensionCommand({profileId:currentProfile.id,jobId:job.id,action});
+      await window.api.extensionCommand({profileId:currentProfile.id,jobId:job.id,action,...(edited != null ? {response:edited} : {})});
+      if (action === 'confirmResume') reviewEdited = null;
       closeReview();
       if (active === token) {$('extension-dispatch-status').textContent = action === 'confirmResume' ? `Exporting the resume for ${jobName(job)}.` : `Showing ${jobName(job)} in Chrome.`;await refreshConnections();}
     } catch (error) {if (active === token) $('extension-dispatch-status').textContent = error.message;}
@@ -573,10 +643,19 @@
       $('extension-rotate-code').addEventListener('click', async () => {try {await window.api.extensionRotateCode(currentProfile && currentProfile.id);await refreshConnections();} catch (e) {$('extension-dispatch-status').textContent = e.message;}});
     }
     $('extension-edit-profile').addEventListener('click', () => editProfile && editProfile());
+    $('extension-review-resume').addEventListener('change', async event => {
+      const on = event.target.checked;
+      try {
+        await saveSetting({fullAutoReviewResume:on});
+        $('extension-dispatch-status').textContent = on ? 'Full auto now stops so you can review each resume, and carries on after you confirm it.' : 'Full auto now exports each resume without stopping for review.';
+      } catch (error) {event.target.checked = !on;$('extension-dispatch-status').textContent = error.message;}
+    });
     if (document.querySelectorAll && document.addEventListener) {
     document.querySelectorAll('[data-review-close]').forEach(node => node.addEventListener('click', closeReview));
     $('resume-review-confirm').addEventListener('click', () => reviewCommand('confirmResume'));
     $('resume-review-details').addEventListener('click', () => reviewCommand('details'));
+    $('resume-review-edit').addEventListener('click', () => {reviewEditing = !reviewEditing;renderReview();});
+    $('resume-review-undo').addEventListener('click', () => {reviewEdited = null;renderReview();});
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       if (!$('resume-review').classList.contains('hidden')) closeReview();
@@ -641,7 +720,7 @@
     });
   }
 
-  function open(profile, onSave, onEdit) {
+  function open(profile, onSave, onEdit, onSetting) {
     initialize();
     token++;
     selectedJobId = null;openMenuJobId = null;filter = 'all';closeReview();
@@ -649,6 +728,9 @@
     liveState = null;
     saveLinks = onSave;
     editProfile = onEdit;
+    saveSetting = onSetting || null;
+    const review = $('extension-review-resume');
+    if (review) {review.checked = profile.fullAutoReviewResume === true;review.disabled = !saveSetting;}
     const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || 'Unnamed profile';
     $('extension-profile-name').textContent = name;
     $('subtitle').textContent = `${name} - Chrome extension mode`;

@@ -230,6 +230,7 @@ app.whenReady().then(async () => {
     const bridgeState={running:true,connections:[],jobs:[],maxConnections:8,pairingCode:'fixture-code',error:''};
     ipcMain.handle('extension:state',()=>bridgeState);
     const commands=[];ipcMain.handle('extension:command',(_e,args)=>{commands.push(args);return {ok:true};});
+    const companies=[];ipcMain.handle('extension:setCompany',(_e,args)=>{companies.push(args);return {ok:true};});
     const manager = await windowFor({preload:path.join(root,'src/main/preload.js')});
     const errors=[];manager.webContents.on('console-message',event=>{if((event.level==='error'||event.level===3) && !event.message.includes('Preview omitted in fixture'))errors.push(event.message);});
     await manager.loadFile(path.join(root,'src/renderer/index.html'));
@@ -349,14 +350,41 @@ app.whenReady().then(async () => {
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-headline").textContent'),'Staff Platform Engineer');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-summary strong").textContent'),'reliable');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-skills dd").textContent'),'Go · Python');
+    // Edit JSON: change part of it, preview the change, and Confirm & export sends your version.
+    await manager.webContents.executeJavaScript('document.querySelector("#resume-review-edit").click()');
+    await manager.webContents.executeJavaScript(`(()=>{const area=document.querySelector("#resume-review-json");area.value=area.value.replace("Staff Platform Engineer","Principal Platform Engineer");area.dispatchEvent(new Event("input"));})()`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-undo").hidden'),false);
+    await manager.webContents.executeJavaScript('document.querySelector("#resume-review-edit").click()');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#resume-review-body .review-headline").textContent'),'Principal Platform Engineer');
     await manager.webContents.executeJavaScript('document.querySelector("#resume-review-confirm").click()');
     await wait(manager,'document.querySelector("#resume-review").classList.contains("hidden")');
     assert.equal(commands.at(-1).action,'confirmResume');
+    assert.equal(JSON.parse(commands.at(-1).response).title,'Principal Platform Engineer');
+    // No company on the job and "company": "" in the resume: the "Company name needed" dialog
+    // asks for it, saves it on the job, then exports.
+    bridgeState.jobs[0]={...bridgeState.jobs[0],company:'',pendingResume:JSON.stringify({company:'',title:'Staff Platform Engineer',summary:'Built systems.',skills:[],experience:[],education:[]})};
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    const confirmsBefore=commands.filter(command=>command.action==='confirmResume').length;
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector('[data-action="review"]').click()`);
+    await manager.webContents.executeJavaScript('document.querySelector("#resume-review-confirm").click()');
+    await wait(manager,'!document.querySelector("#company-modal").classList.contains("hidden")');
+    assert.equal(commands.filter(command=>command.action==='confirmResume').length,confirmsBefore,'nothing is exported before the company is entered');
+    await manager.webContents.executeJavaScript('document.querySelector("#company-input").value="Typed Co";document.querySelector("#company-confirm").click()');
+    await wait(manager,'document.querySelector("#resume-review").classList.contains("hidden")');
+    assert.equal(companies.at(-1).company,'Typed Co');
+    assert.equal(commands.at(-1).action,'confirmResume');
+    console.log('PASS: with no company on the job or in the resume, the company dialog asks for it before export.');
     // Show details in Chrome from the card menu.
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector('.job-menu [data-action="details"]').click()`);
     for(let i=0;i<50 && commands.at(-1).action!=='details';i++)await new Promise(resolve=>setTimeout(resolve,100));
     assert.equal(commands.at(-1).action,'details');
+    // "Review resume in Full auto" starts off and is saved on the profile when switched on.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-review-resume").checked'),false);
+    await manager.webContents.executeJavaScript('document.querySelector("#extension-review-resume").click()');
+    for(let i=0;i<30 && data[1].fullAutoReviewResume!==true;i++)await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(data[1].fullAutoReviewResume,true);
+    console.log('PASS: the Full auto resume review switch is saved on the profile.');
     bridgeState.connections=[];bridgeState.jobs=[];
     await manager.webContents.executeJavaScript('document.querySelector("#extension-edit-profile").click()');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#profile-extension-mode").checked'),true);

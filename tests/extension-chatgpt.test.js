@@ -32,7 +32,7 @@ function editor({draft='',sendButton=false,ignoreClick=false,renderText=value=>v
       if(selector==='[data-message-author-role="user"],[data-turn="user"]')return user?[user]:[];
       if(withResponse && selector==='[data-message-author-role="assistant"],[data-turn="assistant"]')return [assistant];
       if(withResponse && selector.includes(',pre,'))return selector.includes('button[aria-label*="Copy code"')?[assistant,copy]:[assistant];
-      if(selector.includes('#composer-submit-button'))return sendButton?[button]:[];
+      if(selector.includes('[data-testid="send-button"]'))return sendButton?[button]:[];
       return [];
     },
       createRange:()=>({selectNodeContents(){}}),
@@ -150,4 +150,16 @@ test('polling can distinguish an unsent request from a submitted request',async(
   const receipt=await chat.send('Question prompt');
   assert.equal(chat.state(receipt).draftPending,false);
   assert.equal(chat.state(receipt).requestMatched,true);
+});
+
+test('a reply that is only a thinking status counts as still generating',()=>{
+  const chat=editor({withResponse:true});
+  for(const status of ['Thinking','Thought for 12s','ChatGPT said: Searching the web']) {
+    chat.assistant.innerText=chat.assistant.textContent=status;
+    assert.equal(chat.state().generating,true,status);
+  }
+  chat.assistant.innerText=chat.assistant.textContent='Thought for 12s {"company":"Acme","title":"Engineer"}';
+  assert.equal(chat.state().generating,false,'a reply with JSON has finished');
+  chat.assistant.innerText=chat.assistant.textContent='Looking at this role, here is the resume.';
+  assert.equal(chat.state().generating,false);
 });

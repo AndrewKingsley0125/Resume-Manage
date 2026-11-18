@@ -69,7 +69,9 @@
    * @property {string} title
    * @property {string} saveFolder
    * @property {string} templateId
-   * @property {Array<{company:string,title:string,period:string,location:string,bulletsCount:(number|null)}>} workHistory
+   * @property {'profile'|'custom'} resumePromptMode
+   * @property {string} customResumePrompt
+   * @property {Array<{company:string,role:string,title:string,period:string,location:string,bulletsCount:(number|null)}>} workHistory
    * @property {Array<{institution:string,degree:string,period:string}>} education
    * @property {Array<{institution:string,certification:string,date:string}>} certifications
    */
@@ -240,6 +242,11 @@
       applicationDetails: window.App.ApplicationProfile.normalize(p.applicationDetails),
       applicationMode: window.App.ProfileWorkflow.normalizeMode(p.applicationMode),
       extensionJobLinks: window.App.ProfileWorkflow.normalizeJobLinks(p.extensionJobLinks),
+      // Full auto stops for you to review the resume before exporting it (off: fully automatic).
+      fullAutoReviewResume: p.fullAutoReviewResume === true,
+      // Resume prompt source: built from the profile, or the profile's own custom prompt.
+      resumePromptMode: p.resumePromptMode === 'custom' ? 'custom' : 'profile',
+      customResumePrompt: typeof p.customResumePrompt === 'string' ? p.customResumePrompt : '',
       saveFolder: typeof p.saveFolder === 'string' ? p.saveFolder : '',
       // Profiles saved with a since-removed template fall back to Classic.
       templateId: typeof p.templateId === 'string' && window.App.Templates.list().some((t) => t.id === p.templateId)
@@ -252,6 +259,8 @@
         ? p.workHistory.map((w) => ({
             company: (w && w.company) || '',
             title: (w && w.title) || '',
+            // Optional role shown in the resume prompt; older profiles fall back to their legacy title.
+            role: w && typeof w.role === 'string' ? w.role : (w && w.title) || '',
             workType: (w && w.workType) || '',
             workArrangement: (w && w.workArrangement) || '',
             period: (w && w.period) || '',
@@ -442,7 +451,13 @@
           if (ok === false) throw new Error('Could not save job links.');
           // Keep references held by tiles and the active workspace current.
           target.extensionJobLinks = links;
-        }, () => openEditor('edit', profiles.find(p => p.id === profile.id)));
+        }, () => openEditor('edit', profiles.find(p => p.id === profile.id)), async patch => {
+          const target = profiles.find(p => p.id === profile.id);
+          if (!target) throw new Error('Profile no longer exists.');
+          const ok = await window.api.saveProfiles(profiles.map(p => p === target ? {...p, ...patch} : p));
+          if (ok === false) throw new Error('Could not save the setting.');
+          Object.assign(target, patch);
+        });
       } else {
         window.App.Workspace.open(profile);
       }
@@ -586,12 +601,35 @@
       out[key] = el ? !!el.checked : false;
     }
     out.applicationMode = document.getElementById('profile-extension-mode').checked ? 'extension' : 'manual';
+    out.resumePromptMode = promptCustomRadio.checked ? 'custom' : 'profile';
+    out.customResumePrompt = customPromptInput.value;
     return out;
   }
+
+  const promptProfileRadio = document.getElementById('resume-prompt-profile');
+  const promptCustomRadio = document.getElementById('resume-prompt-custom');
+  const customPromptField = document.getElementById('custom-resume-prompt-field');
+  const customPromptInput = document.getElementById('custom-resume-prompt');
+
+  function writePromptMode(mode, text) {
+    promptCustomRadio.checked = mode === 'custom';
+    promptProfileRadio.checked = mode !== 'custom';
+    customPromptInput.value = text || '';
+    customPromptInput.style.borderColor = '';
+    syncPromptMode();
+  }
+
+  function syncPromptMode() {
+    customPromptField.classList.toggle('hidden', !promptCustomRadio.checked);
+  }
+
+  promptProfileRadio.addEventListener('change', syncPromptMode);
+  promptCustomRadio.addEventListener('change', syncPromptMode);
 
   function writeForm(profile) {
     document.getElementById('profile-extension-mode').checked = profile.applicationMode === 'extension';
     document.getElementById('profile-manual-mode').checked = profile.applicationMode !== 'extension';
+    writePromptMode(profile.resumePromptMode, profile.customResumePrompt);
     for (const key of Object.keys(fieldIds)) {
       const el = fieldEls[key];
       if (el) el.value = profile[key] || '';
@@ -606,6 +644,7 @@
   function clearForm() {
     document.getElementById('profile-manual-mode').checked = true;
     document.getElementById('profile-extension-mode').checked = false;
+    writePromptMode('profile', '');
     for (const key of Object.keys(fieldIds)) {
       const el = fieldEls[key];
       if (el) el.value = '';
@@ -729,6 +768,7 @@
   function buildWorkRow(entry) {
     const fields = [
       makeInput('company', 'Company name', entry.company),
+      makeInput('role', 'Role (optional, e.g. Senior Backend Engineer)', entry.role),
       makeInput('workType', 'Work type (Full-time, Contract, Part-time)', entry.workType),
       makeInput('workArrangement', 'Work arrangement (Remote, Hybrid, Onsite)', entry.workArrangement),
       makeInput('period', 'Period (e.g. 2020 – Present)', entry.period),
@@ -842,6 +882,14 @@
       return;
     }
     fieldEls.firstName.style.borderColor = '';
+
+    // A custom prompt mode needs a prompt to use.
+    if (data.resumePromptMode === 'custom' && !data.customResumePrompt.trim()) {
+      customPromptInput.focus();
+      customPromptInput.style.borderColor = 'var(--danger)';
+      return;
+    }
+    customPromptInput.style.borderColor = '';
 
     if (editor.mode === 'create') {
       profiles.push({

@@ -1,6 +1,6 @@
 import {captureCodeCopy} from './code-copy.mjs';
 import {arrangeWorkspace, panelBounds} from './layout.mjs';
-import {APP_URL, answersPrompt, parseAnswers, decodeReply, rememberAnswers, recallAnswers, currentAnswers, carryPageState, optionAnswer, answerableQuestions, mergeGeneratedAnswers, resumeResponse, profileAnswers, profileBasis, learnSiteAnswers, recallSiteAnswers, siteAnswerCount, runProgress, jdSources, parseJdSource} from './core.mjs';
+import {APP_URL, answersPrompt, parseAnswers, decodeReply, rememberAnswers, recallAnswers, currentAnswers, carryPageState, optionAnswer, answerableQuestions, mergeGeneratedAnswers, resumeResponse, profileAnswers, profileBasis, learnSiteAnswers, recallSiteAnswers, siteAnswerCount, runProgress, jdSources, parseJdSource, plainJd} from './core.mjs';
 const locks = new Set();
 let watching = false;
 let runWrites = Promise.resolve();
@@ -285,6 +285,7 @@ async function startResponseMonitor(id,kind,receipt) {
   try {await quietChat((await getRun(id)).chatTabId,'watchResponse',{id,kind,receipt});}
   catch(error){await saveRun(id,{responseMonitor:{kind,marker:receipt.marker,status:'waiting',startedAt:Date.now(),lastError:error.message}});}
 }
+const SETTLED_FAILURE_MS=2*60*1000;
 async function collectMonitoredResponse(message,sender) {
   const run=(await runs())[message.id],monitor=run?.responseMonitor;
   if(!run || sender.tab?.id!==run.chatTabId || !sender.url?.startsWith('https://chatgpt.com/') || monitor?.marker!==message.marker || monitor.kind!==message.kind || monitor.status!=='waiting')return {stop:true};
@@ -336,16 +337,19 @@ async function collectMonitoredResponse(message,sender) {
   }catch(error){
     // A finished reply that still has no JSON after several reads (a refusal, or a reply
     // about something else) will not become one: stop waiting and say why.
+    // A long thinking pause can look finished, so the reply must stay without JSON for two
+    // minutes, over several reads, before Full auto gives up on it.
     const settledReply=!/still generating|still changing|still responding/i.test(error.message);
     const failures=settledReply?(monitor.failures || 0)+1:0;
-    if(failures>=6) {
+    const failingSince=settledReply?monitor.failingSince || Date.now():null;
+    if(failures>=6 && Date.now()-failingSince>=SETTLED_FAILURE_MS) {
       const reason=message.kind==='resume'?'ChatGPT finished, but its reply has no resume JSON (it may have refused). Check the ChatGPT tab, then send the resume prompt again.':'ChatGPT finished, but its reply has no answers JSON. Check the ChatGPT tab, then ask again.';
       await saveRun(message.id,{autopilot:null,pickFields:null,responseMonitor:{...monitor,status:'error',message:reason,lastError:error.message},
         ...(run.fullAuto?.active?{fullAuto:null,fullAutoBlocker:{stage:message.kind==='resume'?'resume':'questions',message:reason,failed:message.kind==='resume',at:Date.now()}}:{})});
       chrome.runtime.sendMessage({event:'response-collection-progress',id:message.id}).catch(()=>{});
       return {stop:true};
     }
-    await saveRun(message.id,{responseMonitor:{...monitor,lastError:error.message,failures}});
+    await saveRun(message.id,{responseMonitor:{...monitor,lastError:error.message,failures,failingSince}});
     if(monitor.lastError!==error.message)chrome.runtime.sendMessage({event:'response-collection-progress',id:message.id}).catch(()=>{});
     return {retry:true};
   }
@@ -358,7 +362,7 @@ async function resumeResponseMonitors() {
     try {
       const run=all[id] || await recoverRun(id),receipt=run[value.responseMonitor.kind==='resume'?'resumeReceipt':'answerReceipt'];
       if(value.responseMonitor.kind==='answers' && !run.fields?.length){await saveRun(id,{responseMonitor:{...value.responseMonitor,status:'error',message:'The question scan was cleared. Scan the application again before requesting answers.'}});continue;}
-      if(receipt)await quietChat(run.chatTabId,'watchResponse',{id,kind:value.responseMonitor.kind,receipt});
+      if(receipt){await quietChat(run.chatTabId,'watchResponse',{id,kind:value.responseMonitor.kind,receipt});await quietChat(run.chatTabId,'checkResponse').catch(()=>{});}
     }catch(_){}
   }
 }
@@ -630,8 +634,8 @@ async function startFullAuto(id) {
   await saveRun(id,{fullAuto:{active:true,stage:'pages',startedAt:Date.now()},fullAutoBlocker:null,autoSummary:null});
   return fullAutoContinue(id);
 }
-async function stopFullAuto(id,stage,reason,{failed=false}={}) {
-  await saveRun(id,{fullAuto:null,fullAutoBlocker:{stage,message:reason,failed,at:Date.now()}});
+async function stopFullAuto(id,stage,reason,{failed=false,review=false}={}) {
+  await saveRun(id,{fullAuto:null,fullAutoBlocker:{stage,message:reason,failed,review,at:Date.now()}});
   return {message:`Full auto stopped at ${FULL_AUTO_STEP[stage]}: ${reason} Finish this step yourself, or fix it and click Full auto again to carry on.`,blocked:stage};
 }
 async function fullAutoContinue(id) {
@@ -653,7 +657,11 @@ async function fullAutoContinue(id) {
     if (!job.files) {
       stage = 'resume';
       await saveRun(id,{fullAuto:{...run.fullAuto,stage}});
-      if (run.pendingResumeResponse) return stopFullAuto(id,stage,'The resume ChatGPT wrote needs your review before it is exported.');
+      if (run.pendingResumeResponse) {
+        if (job.fullAutoReviewResume) return stopFullAuto(id,stage,'Review the resume ChatGPT wrote, then confirm it. Full auto carries on after you confirm.',{review:true});
+        const stopped = await exportPendingResume(id,run.pendingResumeResponse);
+        return stopped || fullAutoContinue(id);
+      }
       if (run.responseMonitor?.kind === 'resume' && run.responseMonitor.status === 'waiting') return {message:'Waiting for ChatGPT to write the resume. Full auto carries on when it finishes.'};
       // A JD you already reviewed is kept; otherwise it is read from the page.
       let posting = job.jd ? {company:job.company || '', title:job.title || '', description:job.jd} : (await command({action:'extract',id})).job;
@@ -683,12 +691,21 @@ async function fullAutoResumeReady(id,matched) {
   if (!run.fullAuto?.active) return {message:'Full auto stopped.'};
   if (!(await request(jobPath(id))).files) {
     if (!run.pendingResumeResponse) return stopFullAuto(id,'resume','The resume reply could not be read.',{failed:true});
-    if (!matched) return stopFullAuto(id,'resume',"ChatGPT's reply could not be matched to this job for certain. Review the resume, then export it.");
-    try {await request(jobPath(id)+'/resume',{response:run.pendingResumeResponse});}
-    catch (error) {return stopFullAuto(id,'resume',`The resume could not be exported: ${error.message}`,{failed:true});}
-    await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null});
+    // "Review resume in Full auto" (Resume Manager, Auto apply page) stops here for you. Off,
+    // the latest reply in this job's own ChatGPT conversation is exported straight away, even
+    // when it carries no request reference to match it by.
+    if ((await request(jobPath(id))).fullAutoReviewResume) return stopFullAuto(id,'resume',`Review the resume ChatGPT wrote, then confirm it. Full auto carries on after you confirm.${matched ? '' : " (Its reply could not be matched to this job's request for certain.)"}`,{review:true});
+    const stopped = await exportPendingResume(id,run.pendingResumeResponse);
+    if (stopped) return stopped;
   }
   return fullAutoContinue(id);
+}
+// Exports the collected resume for Full auto; returns how Full auto stopped if it failed.
+async function exportPendingResume(id,response) {
+  try {await request(jobPath(id)+'/resume',{response});}
+  catch (error) {return stopFullAuto(id,'resume',`The resume could not be exported: ${error.message}`,{failed:true});}
+  await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null});
+  return null;
 }
 async function waitComplete(tabId) {
   const until = Date.now() + 60000;
@@ -706,10 +723,7 @@ async function requireReady(run) {
   }
   return tab;
 }
-// Job windows are cascaded so part of every one stays on screen. Chrome treats a
-// window that is completely covered as hidden and slows its timers, which would
-// stall filling and reading ChatGPT in the jobs behind.
-const CASCADE_STEP = 32, CASCADE_SLOTS = 8, PANEL_WIDTH = 400;
+const PANEL_WIDTH = 400;
 async function jobWindowArea() {
   const {jobWindowArea: saved} = await chrome.storage.session.get('jobWindowArea');
   if (saved) return saved;
@@ -721,29 +735,19 @@ async function jobWindowArea() {
   if (area) await chrome.storage.session.set({jobWindowArea:area});
   return area;
 }
+// Each job window opens maximized, filling the screen.
 async function openJobWindow(url, id) {
-  const all = await runs(), used = new Set();
-  for (const [otherId, other] of Object.entries(all)) {
-    if (otherId === id || other.windowSlot == null || !other.windowId) continue;
-    try {await chrome.windows.get(other.windowId);used.add(other.windowSlot);} catch (_) { /* closed */ }
-  }
-  let slot = 0;while (used.has(slot) && slot < CASCADE_SLOTS - 1) slot++;
-  const area = await jobWindowArea().catch(() => null);
-  const span = CASCADE_STEP * (CASCADE_SLOTS - 1);
-  const bounds = area && area.width > span + 600 && area.height > span + 400
-    ? {left:area.left + slot * CASCADE_STEP, top:area.top + slot * CASCADE_STEP, width:area.width - span, height:area.height - span}
-    : {};
-  const win = await chrome.windows.create({url, type:'normal', focused:true, ...bounds});
-  await saveRun(id,{windowId:win.id, windowSlot:slot});
+  const win = await chrome.windows.create({url, type:'normal', focused:true, state:'maximized'});
+  await saveRun(id,{windowId:win.id, windowSlot:null});
   return win.tabs[0];
 }
 // The job's own Resume Apply window: a narrow window without tabs or address bar, docked
 // to the right of the job window, that only ever works on this job. Opens by itself.
 const jobPanelUrl = id => chrome.runtime.getURL('panel.html?job=' + encodeURIComponent(id));
 async function openPanelWindow(id, jobWindowId, existingId) {
-  const jobWindow = await chrome.windows.get(jobWindowId);
-  if (jobWindow.state === 'maximized' || jobWindow.state === 'fullscreen') await chrome.windows.update(jobWindowId,{state:'normal'}).catch(() => {});
   const current = await chrome.windows.get(jobWindowId);
+  // A maximized job window stays maximized: the Resume Apply window sits over its right edge.
+  const filled = current.state === 'maximized' || current.state === 'fullscreen';
   const area = await jobWindowArea().catch(() => null);
   const {job, panel} = panelBounds(current, area, PANEL_WIDTH);
   let shrink = 0;
@@ -751,7 +755,8 @@ async function openPanelWindow(id, jobWindowId, existingId) {
     await chrome.windows.update(jobWindowId,{width:job.width}).catch(() => {});
     shrink = current.width - job.width;
   }
-  const place = current.state === 'normal' ? panel : {};
+  const place = filled ? {left:Math.max(current.left || 0, (current.left || 0) + (current.width || 0) - PANEL_WIDTH), top:current.top || 0, width:PANEL_WIDTH, height:current.height || undefined}
+    : current.state === 'normal' ? panel : {};
   if (existingId) {
     let open = false;try {await chrome.windows.get(existingId);open = true;} catch (_) { /* closed: open it again */ }
     if (open) {await chrome.windows.update(existingId,{...place,focused:false}).catch(() => {});return {id:existingId, shrink};}
@@ -814,13 +819,38 @@ async function postingDescription(link, {renderIn = null} = {}) {
   }
   return null;
 }
+// The job posting on the page. Some sites (iCIMS) show it inside a frame, with the top page
+// holding little or only other text: then the frames are read too. A description from a
+// site's own container or posting data wins over one guessed from the page's text.
+const solid = job => job && job.found !== 'page' && String(job.description || '').trim().length >= 200;
+async function pageJob(tabId) {
+  const top = await page(tabId,'job');
+  if (solid(top)) return top;
+  let best = null;
+  const rank = job => (solid(job) ? 1e9 : 0) + String(job?.description || '').length;
+  // The frame can still be loading after the page itself has finished: a few more tries.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let frames = 0;
+    try {
+      await chrome.scripting.executeScript({target:{tabId,allFrames:true},files:['page-tools.js']});
+      const results = await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:() => {try {return globalThis.ResumeApplyPage.job();} catch (_) {return null;}}});
+      frames = results.length;
+      const found = results.map(item => item.result).filter(item => item && item.description).sort((a,b) => rank(b) - rank(a))[0];
+      if (found && rank(found) > rank(best)) best = found;
+    } catch (_) { /* a frame the extension cannot read */ }
+    if (frames < 2 || solid(best)) break;
+    await new Promise(resolve => setTimeout(resolve,1000));
+  }
+  if (best && rank(best) > rank(top)) return best;
+  return top;
+}
 async function renderedPosting(url, windowId) {
   const tab = await chrome.tabs.create({url, windowId, active:false});
   try {
     await waitComplete(tab.id);await page(tab.id,'settled').catch(() => {});
     let found = null;
     for (let attempt = 0; attempt < 12; attempt++) {
-      found = await page(tab.id,'job').catch(() => null);
+      found = await pageJob(tab.id).catch(() => null);
       if (String(found?.description || '').trim().length >= 200) break;
       await new Promise(resolve => setTimeout(resolve,1500));
     }
@@ -873,7 +903,8 @@ const APP_COMMANDS = {
   open: id => command({action:'open',id}),
   // Detect the job description, then send the resume prompt to this job's ChatGPT.
   prepare: async id => {const {job} = await command({action:'extract',id});return command({action:'sendResume',id,job});},
-  confirmResume: id => command({action:'confirmResume',id,confirmed:true}),
+  // The resume as you edited it in the app's review, when you changed it there.
+  confirmResume: (id, queued) => command({action:'confirmResume',id,confirmed:true,...(typeof queued?.response==='string' ? {response:queued.response} : {})}),
   auto: id => command({action:'auto',id}),
   fullAuto: id => command({action:'fullAuto',id}),
   scan: id => command({action:'scan',id}),
@@ -917,7 +948,7 @@ function runAppCommands(state) {
       const quick = queued.action === 'focus' || queued.action === 'details';
       for (let i = 0; !quick && i < 600 && locks.has(job.id); i++) await new Promise(resolve => setTimeout(resolve, 500));
       if (!quick) locks.add(job.id);
-      try {const result = await APP_COMMANDS[queued.action](job.id);outcome = {ok:true, message:result?.message || 'Done.'};}
+      try {const result = await APP_COMMANDS[queued.action](job.id, queued);outcome = {ok:true, message:result?.message || 'Done.'};}
       catch (error) {outcome = {ok:false, message:error.message || String(error)};}
       finally {if (!quick) locks.delete(job.id);}
       await request(jobPath(job.id) + '/command-result', {commandId:queued.id, ...outcome}).catch(() => {});
@@ -1088,13 +1119,14 @@ async function command(message) {
   if (run.fullAutoBlocker && !['pollAnswers','autoResume'].includes(action)) await saveRun(id,{fullAutoBlocker:null});
   if (action === 'extract') {
     await requireReady(run);
-    const found = await page(run.jobTabId,'job');
+    const found = await pageJob(run.jobTabId);
     // An application-form link: read the job's description from its posting instead.
     const jobTab = await chrome.tabs.get(run.jobTabId);
     const thin = String(found?.description || '').trim().length < 200;
     const posting = await postingDescription(jobTab.url || found.url, {renderIn:thin ? jobTab.windowId : null}).catch(() => null);
-    if (!posting) return {job:found};
-    return {job:{...found, title:posting.title || found.title, company:posting.company || found.company, description:posting.description, descriptionSource:posting.url},
+    // The JD is sent as plain text: no HTML tags.
+    if (!posting) return {job:found ? {...found, description:plainJd(found.description)} : found};
+    return {job:{...found, title:posting.title || found.title, company:posting.company || found.company, description:plainJd(posting.description), descriptionSource:posting.url},
       message:'This page is the application form, so the job description was read from the job posting. Check it before sending.'};
   }
   if (action === 'sendResume') {
@@ -1104,16 +1136,27 @@ async function command(message) {
   }
   if (action === 'readResume' || action === 'confirmResume') {
     const detail = await request(jobPath(id));
-    let response;
+    let response,sourceUrl=run.pendingResumeUrl || null;
     if(action==='confirmResume') {
       if(message.confirmed!==true || !run.pendingResumeResponse)throw new Error('Read and review the response first.');
-      const current=await readResumeJson(run,detail.resumePrompt);
-      if(current.url!==run.pendingResumeUrl || resumeResponse(current.response)!==run.pendingResumeResponse)throw new Error('The ChatGPT response changed. Click Read again and review the new response.');
-      response=run.pendingResumeResponse;
+      // You may edit the JSON while reviewing it: part of it or all of it. What you confirm is
+      // what is exported, so it is not compared with ChatGPT's reply again.
+      const edited=typeof message.response==='string' && message.response.trim() ? message.response.trim() : null;
+      if(edited && edited!==run.pendingResumeResponse) {
+        try {response=resumeResponse(edited);}
+        catch(error) {throw new Error(`Your edited resume JSON can't be used: ${/No complete resume JSON/.test(error.message) ? 'it must be valid JSON with company, title, summary, skills, experience and education.' : error.message}`);}
+      } else if(!run.pendingResumeUrl) {
+        // A pasted resume: there is no ChatGPT reply to compare it with.
+        response=run.pendingResumeResponse;
+      } else {
+        const current=await readResumeJson(run,detail.resumePrompt);
+        if(current.url!==run.pendingResumeUrl || resumeResponse(current.response)!==run.pendingResumeResponse)throw new Error('The ChatGPT response changed. Click Read again and review the new response.');
+        response=run.pendingResumeResponse;
+      }
     } else if(message.response) response=resumeResponse(message.response);
     else {
       const result=await readResumeJson(run,detail.resumePrompt);
-      response=resumeResponse(result.response);
+      response=resumeResponse(result.response);sourceUrl=result.url;
       // A revised resume replaces the exported one: always shown for review first.
       if(detail.files) {
         await saveRun(id,{pendingResumeResponse:response,pendingResumeUrl:result.url});
@@ -1124,7 +1167,20 @@ async function command(message) {
         return {needsResumeConfirmation:true,responsePreview:response,message:'The response is ready, but automatic request matching was unavailable. Review the resume below and confirm it belongs to this job before exporting.'};
       }
     }
-    const job=await request(jobPath(id)+'/resume',{response,...(detail.files?{replace:true}:{})});
+    // No company on the job or in the resume: shown for review, where you are asked for it.
+    let named='';try{named=String(JSON.parse(response).company || '').trim();}catch(_){}
+    const company=action==='confirmResume' && typeof message.company==='string' ? message.company.trim().slice(0,250) : '';
+    if(action!=='confirmResume' && !String(detail.company || '').trim() && !named) {
+      await saveRun(id,{pendingResumeResponse:response,pendingResumeUrl:sourceUrl});
+      return {needsResumeConfirmation:true,responsePreview:response,message:'Neither the job nor the resume names the hiring company. Enter it below, then export.'};
+    }
+    const job=await request(jobPath(id)+'/resume',{response,...(detail.files?{replace:true}:{}),...(company?{company}:{})});
+    // Full auto stopped only so you could review this resume: it carries on with the application.
+    if(action==='confirmResume' && run.fullAutoBlocker?.stage==='resume' && run.fullAutoBlocker.review && !detail.files) {
+      await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null,fullAuto:{active:true,stage:'questions',startedAt:Date.now()},fullAutoBlocker:null,...(run.responseMonitor?.kind==='resume'?{responseMonitor:{...run.responseMonitor,status:'ready'}}:{})});
+      const outcome=await fullAutoContinue(id);
+      return {...outcome,job,message:`Resume exported. ${outcome.message}`};
+    }
     // A replaced resume is uploaded again on the form, over the old file.
     await saveRun(id,{pendingResumeResponse:null,pendingResumeUrl:null,...(detail.files?{resumeUploadedUrl:null,resumeReplaced:true}:{}),...(run.responseMonitor?.kind==='resume'?{responseMonitor:{...run.responseMonitor,status:'ready'}}:{})});
     return {job,message:detail.files?'Resume replaced with the revised one. Auto-fill uploads it on the form next time.':'PDF, DOCX, and JD.txt exported by Resume Manager.'};
@@ -1205,6 +1261,11 @@ async function command(message) {
 }
 chrome.runtime.onMessage.addListener((message,sender,respond) => {
   if(message.event==='page-submitting'){rememberSubmitted(message,sender).catch(()=>{});return false;}
+  // A background ChatGPT tab asks to be checked again soon: its own timers run late there.
+  if(message.event==='chat-check-later') {
+    if(sender.tab?.id && sender.url?.startsWith('https://chatgpt.com/'))setTimeout(()=>quietChat(sender.tab.id,'checkResponse').catch(()=>{}),Math.min(5000,Math.max(200,Number(message.delay) || 1500)));
+    return false;
+  }
   if(message.event==='chat-response-ready' || message.event==='chat-response-timeout' || message.event==='chat-response-error'){collectMonitoredResponse(message,sender).then(respond,error=>respond({error:error.message}));return true;}
   if (!sender.url || !sender.url.startsWith(chrome.runtime.getURL('panel.html'))) return false;
   const key = ['detail','pollAnswers'].includes(message.action) ? message.action+':'+message.id : message.id || message.action;

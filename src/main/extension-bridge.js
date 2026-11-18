@@ -46,7 +46,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return profile;
   }
   const safeConnection = c => ({id:c.id, name:c.name, connected:c.lastSeen > 0 && now() - c.lastSeen < 90000, lastSeen:c.lastSeen, pairedAt:c.pairedAt || null, profileId:c.profileId || null});
-  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, outcome:job.outcome || null, failure:job.failure || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at})), lastCommand:job.lastCommand || null});
+  const summary = job => ({id:job.id, profileId:job.profileId, connectionId:job.connectionId, url:job.url, company:job.company || '', title:job.title || '', status:job.status, completedAt:job.completedAt || null, outcome:job.outcome || null, failure:job.failure || null, exported:!!job.files, error:job.error || '', progress:job.progress || null, events:job.events || [], page:job.page || null, pendingResume:job.pendingResume || '', commands:pendingCommands(job).map(c => ({id:c.id, action:c.action, at:c.at, ...(c.response ? {response:c.response} : {})})), lastCommand:job.lastCommand || null});
   // Steps the app can start for a job; its extension runs them and reports back.
   const COMMANDS = ['open','fullAuto','prepare','confirmResume','replaceResume','auto','scan','ask','fill','complete','fail','focus','details'];
   const pendingCommands = job => (job.commands || []).filter(c => !c.done);
@@ -95,7 +95,8 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     for (const finish of [...(eventWaiters.get(connectionId) || [])]) finish();
     return summary(job);
   }
-  function command(profileId, jobId, action) {
+  // confirmResume may carry the resume JSON as you edited it in the review.
+  function command(profileId, jobId, action, options = {}) {
     if (!server || !server.listening) throw fail('The local extension service is offline.');
     if (!COMMANDS.includes(action)) throw fail('Unknown command.');
     const job = state.jobs.find(j => j.id === jobId && j.profileId === profileId);
@@ -105,6 +106,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     if (!client) throw fail('This job\'s browser is no longer linked.', 409);
     if (pendingCommands(job).some(c => c.action === action)) throw fail('That step is already waiting for the browser.', 409);
     const entry = {id:crypto.randomUUID(), action, at:now()};
+    if (action === 'confirmResume' && typeof options.response === 'string' && options.response.trim()) entry.response = text(options.response.trim(), 200000);
     if (COMMAND_NAMES[action]) logEvent(job, `You started: ${COMMAND_NAMES[action]}`);
     job.commands = [...pendingCommands(job), entry];persist();
     for (const finish of [...(eventWaiters.get(client.id) || [])]) finish();
@@ -168,6 +170,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       prompt = base.includes('[PASTE THE JOB DESCRIPTION HERE]') ? base.replace('[PASTE THE JOB DESCRIPTION HERE]', () => job.jd) : base + '\n\nJOB DESCRIPTION:\n' + job.jd;
     }
     return {...summary(job), jd:job.jd || '', resumePrompt:prompt, profile:questionProfile(profile), resume:job.resume || null,
+      fullAutoReviewResume:profile?.fullAutoReviewResume === true,
       files:job.files ? {pdf:job.files.path, docx:job.files.docxPath, jd:job.files.jdPath} : null};
   }
   async function action(client, id, kind, body) {
@@ -231,6 +234,8 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
       // when asked to.
       const replacing = !!job.files;
       if (replacing && body.replace !== true) throw fail('Files are already exported for this job.', 409);
+      // The company you entered when exporting (neither the job nor the resume named one).
+      if (text(body.company, 250).trim() && !String(job.company || '').trim()) job.company = text(body.company, 250).trim();
       busy.add(id);
       try {
         const result = await exportResume(profileFor(job), text(body.response), job, {replace:replacing});

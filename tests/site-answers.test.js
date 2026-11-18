@@ -38,59 +38,68 @@ test('education blocks are filled from the profile in order; years outside an ed
   assert.deepEqual(profileAnswers([{id:'s',label:'School',type:'text'},{id:'z',label:'End date year',type:'number'}],{education:[{institution:'NYU',period:'2014 - Present'}]}).answers,[{id:'s',answer:'NYU'}]);
 });
 
-test('answers about the applicant are saved per site in the site wording; job-specific ones are not',async()=>{
+test('a site default question is saved once two jobs on the site asked it, in the site wording',async()=>{
   const {learnSiteAnswers,recallSiteAnswers,profileBasis}=await core;
   const basis=profileBasis(tonyProfile),fields=greenhouseForm();
   const values=[['f','Tony'],['s1','University of California - Berkeley'],['d1',MASTERS],['y1','2020'],['g','Male'],['k','No'],['w','Because...'],['r','Boston']].map(([id,value])=>({id,value}));
-  const {book,saved}=learnSiteAnswers(undefined,fields,values,{jobId:'job1',company:'Smartsheet',basis});
-  assert.deepEqual(Object.values(book.answers).map(entry=>entry.label).sort(),['Degree','Gender','School','Start date year']);
-  assert.equal(saved,4);
+  let {book,saved}=learnSiteAnswers(undefined,fields,values,{jobId:'job1',company:'Smartsheet',basis});
+  assert.equal(saved,0,'a question seen on one job is not a site default yet');
   const next=greenhouseForm().map(field=>({...field,id:'n'+field.id,fillMode:undefined,answerFormat:undefined}));
+  assert.deepEqual(recallSiteAnswers(next,book,basis).answers,[]);
+  ({book,saved}=learnSiteAnswers(book,fields,values,{jobId:'job2',company:'Smartsheet',basis}));
+  // Contact fields, free text and questions naming the company are never saved.
+  assert.deepEqual(Object.values(book.answers).map(entry=>entry.label).sort(),['Degree','Gender','Preferred office','School','Start date year']);
+  assert.equal(saved,5);
   const recalled=recallSiteAnswers(next,book,basis);
   const byId=Object.fromEntries(recalled.answers.map(item=>[item.id,item.answer]));
   assert.equal(byId.ns1,'University of California - Berkeley');assert.equal(byId.nd1,MASTERS);assert.equal(byId.ng,'Male');
   assert.equal(byId.ns2,undefined,'the second education block has its own answer');
   assert.equal(recalled.fields.find(field=>field.id==='ns1').fillMode,'search');
   // Editing one part of the profile forgets only the answers that rest on it.
-  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,education:[]})).answers,[{id:'ng',answer:'Male'}]);
-  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{gender:'Woman'}})).answers.map(item=>item.id).sort(),['nd1','ns1','ny1']);
+  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,education:[]})).answers.map(item=>item.id).sort(),['ng','nr']);
+  assert.deepEqual(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{gender:'Woman'}})).answers.map(item=>item.id).sort(),['nd1','nr','ns1','ny1']);
   // Adding an unrelated detail (travel) forgets nothing.
-  assert.equal(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{...tonyProfile.applicationDetails,travelDetails:'Up to 25%'}})).answers.length,4);
+  assert.equal(recallSiteAnswers(next,book,profileBasis({...tonyProfile,applicationDetails:{...tonyProfile.applicationDetails,travelDetails:'Up to 25%'}})).answers.length,5);
 });
 
-test('answers saved before per-topic fingerprints are still reused until the profile changes',async()=>{
+test('answers saved under the older rules are reused only when the site record shows two jobs asked them',async()=>{
   const {recallSiteAnswers,siteAnswerCount,profileBasis}=await core;
   // The whole-profile fingerprint the book had, from before the three common answers existed.
   const source=JSON.stringify([tonyProfile.firstName,tonyProfile.lastName,tonyProfile.location,tonyProfile.education,{gender:'Man'}]);
   let hash=5381;for(let i=0;i<source.length;i++)hash=(hash*33^source.charCodeAt(i))>>>0;
-  const book={basis:hash.toString(36),answers:{'select|gender#0':{answer:'Male',label:'Gender'}},seen:{}};
   const withDefaults={...tonyProfile,applicationDetails:{gender:'Man',answerPrompt:'x',availableToStart:'Immediately',howDidYouHear:'LinkedIn',appliedBefore:'No'}};
   const fields=[{id:'g',label:'Gender',type:'select',options:['Male','Female']}];
-  assert.deepEqual(recallSiteAnswers(fields,book,profileBasis(withDefaults)).answers,[{id:'g',answer:'Male'}]);
-  assert.equal(siteAnswerCount(book,profileBasis(withDefaults)),1);
-  assert.deepEqual(recallSiteAnswers(fields,book,profileBasis({...withDefaults,location:'Boston'})).answers,[]);
+  const once={basis:hash.toString(36),answers:{'select|gender#0':{answer:'Male',label:'Gender'}},seen:{}};
+  assert.deepEqual(recallSiteAnswers(fields,once,profileBasis(withDefaults)).answers,[],'saved after a single job');
+  assert.equal(siteAnswerCount(once,profileBasis(withDefaults)),0);
+  const twice={...once,seen:{'select|gender#0':{a:'Male',b:'Male'}}};
+  assert.deepEqual(recallSiteAnswers(fields,twice,profileBasis(withDefaults)).answers,[{id:'g',answer:'Male'}]);
+  assert.equal(siteAnswerCount(twice,profileBasis(withDefaults)),1);
+  assert.deepEqual(recallSiteAnswers(fields,twice,profileBasis({...withDefaults,location:'Boston'})).answers,[]);
 });
 
-test('other questions are saved only after two jobs on the site got the same answer',async()=>{
+test('the newest answer to a site default question is the one reused',async()=>{
   const {learnSiteAnswers,recallSiteAnswers}=await core;
   const fields=greenhouseForm(),office=value=>[{id:'r',value}];
   let {book}=learnSiteAnswers(undefined,fields,office('Boston'),{jobId:'a',basis:'b'});
-  assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[]);
   ({book}=learnSiteAnswers(book,fields,office('Boston'),{jobId:'a',basis:'b'}));
   assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[],'the same job twice is still one job');
   ({book}=learnSiteAnswers(book,fields,office('Boston'),{jobId:'b',basis:'b'}));
   assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[{id:'r',answer:'Boston'}]);
   ({book}=learnSiteAnswers(book,fields,office('Bellevue'),{jobId:'c',basis:'b'}));
-  assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[],'answers that differ by job are not reused');
+  assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[{id:'r',answer:'Bellevue'}]);
+  // Your correction on an earlier job, made later, is now the newest answer.
+  ({book}=learnSiteAnswers(book,fields,office('Boston'),{jobId:'a',basis:'b'}));
+  assert.deepEqual(recallSiteAnswers(fields,book,'b').answers,[{id:'r',answer:'Boston'}]);
 });
 
 test('a corrected answer replaces the saved one, and a choice the site no longer offers is not reused',async()=>{
   const {learnSiteAnswers,recallSiteAnswers}=await core;
   const fields=greenhouseForm();
-  let {book}=learnSiteAnswers(undefined,fields,[{id:'s1',value:'University of California - Davis'}],{jobId:'a',basis:'b'});
-  ({book}=learnSiteAnswers(book,fields,[{id:'s1',value:'University of California - Berkeley'}],{jobId:'a',basis:'b'}));
-  assert.equal(recallSiteAnswers(fields,book,'b').answers[0].answer,'University of California - Berkeley');
-  ({book}=learnSiteAnswers(book,fields,[{id:'g',value:'Male'}],{jobId:'a',basis:'b'}));
+  let {book}=learnSiteAnswers(undefined,fields,[{id:'s1',value:'University of California - Davis'},{id:'g',value:'Male'}],{jobId:'a',basis:'b'});
+  ({book}=learnSiteAnswers(book,fields,[{id:'s1',value:'University of California - Davis'},{id:'g',value:'Male'}],{jobId:'b',basis:'b'}));
+  ({book}=learnSiteAnswers(book,fields,[{id:'s1',value:'University of California - Berkeley'}],{jobId:'b',basis:'b'}));
+  assert.equal(recallSiteAnswers(fields,book,'b').answers.find(item=>item.id==='s1').answer,'University of California - Berkeley');
   const renamed=fields.map(field=>field.id==='g'?{...field,options:['Man','Woman']}:field);
   assert.equal(recallSiteAnswers(renamed,book,'b').answers.find(item=>item.id==='g')?.answer,'Man');
   const gone=fields.map(field=>field.id==='g'?{...field,options:['Prefer not to say']}:field);

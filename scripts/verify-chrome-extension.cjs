@@ -13,7 +13,8 @@ async function main() {
   if(!fs.existsSync(chromePath)) throw new Error('Set RESUME_TEST_CHROME to a Chrome executable.');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(),'resume-chrome-extension-'));
   const profile = {id:'chrome-test',firstName:'Fixture',applicationDetails:{country:'United States'},applicationMode:'extension',extensionJobLinks:['http://127.0.0.1:17373/fixture-job'],workHistory:[],education:[]};
-  const bridge = createExtensionBridge({getProfiles:()=>[profile],buildPrompt:require('../src/main/prompt').buildPrompt,exportResume:async (profile,response)=>{const resume=Resume.parse(response,profile),docxPath=path.join(temp,'resume.docx');fs.writeFileSync(docxPath,require('../src/main/docx').buildDocx(profile,resume,{}));return {resume,files:{path:'fixture.pdf',docxPath,jdPath:'JD.txt'}};}});
+  const exportedResponses=[];
+  const bridge = createExtensionBridge({getProfiles:()=>[profile],buildPrompt:require('../src/main/prompt').buildPrompt,exportResume:async (profile,response)=>{exportedResponses.push(response);const resume=Resume.parse(response,profile),docxPath=path.join(temp,'resume.docx');fs.writeFileSync(docxPath,require('../src/main/docx').buildDocx(profile,resume,{}));return {resume,files:{path:'fixture.pdf',docxPath,jdPath:'JD.txt'}};}});
   let child, socket;
   const jobHtml = `<!doctype html><html><head><title>Engineer at Acme</title><script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Acme"},"description":"Build reliable systems. You will design, ship and operate backend services used by millions of customers, work closely with product and design, review code, mentor other engineers, and improve monitoring, testing and deployment across the platform team."}</script></head><body><form><label for="first">First name</label><input id="first"><label for="why">Why our company?</label><textarea id="why"></textarea><label for="resume">Resume / CV</label><input id="resume" name="resume" type="file" accept=".docx"><label for="cover">Cover letter</label><input id="cover" name="cover_letter" type="file"><button type="submit">Submit</button></form><script>globalThis.submitted=false;document.querySelector('form').onsubmit=e=>{e.preventDefault();submitted=true;};</script></body></html>`;
   const baseFixtureJobHtml=jobHtml.replace('<label for="resume">','<label for="country">Country</label><input id="country" class="cx-select-input" role="combobox" aria-haspopup="grid" aria-expanded="false" aria-controls="country-options"><label for="resume">')
@@ -165,7 +166,9 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     let forgotten;for(let i=0;i<30;i++){const st=await evaluate(`chrome.runtime.sendMessage({action:'state'})`);if(st?.runs){forgotten=st.runs[restart.id];break;}await delay(100);}
     assert.equal(forgotten,undefined,'its run is forgotten');
     console.log("PASS: Start over closes the job's tabs and puts it back to Not sent.");
-    // Full auto reads the JD and sends the resume prompt by itself.
+    // Full auto reads the JD and sends the resume prompt by itself. "Review resume in Full auto"
+    // is on here, so it stops for the review.
+    profile.fullAutoReviewResume=true;
     const sent=await evaluate(`chrome.runtime.sendMessage({action:'fullAuto',id:${JSON.stringify(job.id)}})`);assert.equal(sent.ok,true,JSON.stringify(sent));assert.match(sent.message,/Resume prompt sent/);
     assert.equal(bridge.dashboard(profile.id).jobs.find(j=>j.id===job.id).company,'Acme');
     // If the long request is omitted entirely, require human confirmation instead of blocking export.
@@ -182,16 +185,24 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     assert.equal(collected.run.responseMonitor?.status,'ready',JSON.stringify(collected.run.responseMonitor));
     // The reply could not be matched to its request, so Full auto hands the resume back for review.
     assert.equal(collected.run.fullAutoBlocker?.stage,'resume',JSON.stringify(collected.run.fullAutoBlocker));assert.ok(!collected.run.fullAuto?.active);
+    assert.equal(collected.run.fullAutoBlocker.review,true);
+    // Stopped here so the rest of this check confirms and fills the form step by step.
+    await evaluate(`chrome.runtime.sendMessage({action:'stopFullAuto',id:${JSON.stringify(job.id)}})`);profile.fullAutoReviewResume=false;
     console.log('PASS: Full auto sends the resume prompt and stops at Resume when the reply needs review.');
     const review={responsePreview:collected.run.pendingResumeResponse};
     assert.ok(review.responsePreview);assert.ok(!bridge.dashboard().jobs[0].exported);
     assert.doesNotMatch(review.responsePreview,/Iterate|Copy code/);assert.equal(JSON.parse(review.responsePreview).company,'Acme');
     const clipboardState=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.chatTabId}},world:'MAIN',func:()=>({writes:fixtureClipboardWrites,restored:navigator.clipboard.writeText===fixtureClipboardWrite})})`);assert.equal(clipboardState[0].result.writes,0);assert.equal(clipboardState[0].result.restored,true);
     const unapproved=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:false})`);assert.ok(unapproved.error);
-    const exported=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:true})`);
+    // Edited JSON that is broken is refused; the edited resume is what gets exported.
+    const broken=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:true,response:'{"company":"Acme"'})`);
+    assert.match(broken.error||'',/edited resume JSON/);assert.ok(!bridge.dashboard().jobs[0].exported);
+    const edited=JSON.stringify({...JSON.parse(review.responsePreview),summary:'My own edited summary.'},null,2);
+    const exported=await evaluate(`chrome.runtime.sendMessage({action:'confirmResume',id:${JSON.stringify(job.id)},confirmed:true,response:${JSON.stringify(edited)}})`);
     assert.equal(exported.ok,true,JSON.stringify(exported));assert.equal(exported.job.files.pdf,'fixture.pdf');
+    assert.equal(JSON.parse(exportedResponses.at(-1)).summary,'My own edited summary.');
     assert.equal((await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`)).run.fullAutoBlocker,null,'confirming it yourself clears the Full auto notice');
-    console.log('PASS: streaming resume JSON is collected automatically only after completion, then exported only after manual confirmation.');
+    console.log('PASS: streaming resume JSON is collected automatically only after completion, then exported only after manual confirmation, with your edits.');
     const scanned=await evaluate(`chrome.runtime.sendMessage({action:'scan',id:${JSON.stringify(job.id)}})`);assert.equal(scanned.ok,true,JSON.stringify(scanned));
     const uploadScan=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
     const resumeField=uploadScan.run.fields.find(f=>f.type==='file' && f.resumeUpload);assert.ok(resumeField);
@@ -246,13 +257,12 @@ const editor=document.createElement('div');editor.className='cm-editor';const co
     const application=await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},world:'MAIN',func:()=>({submitted:globalThis.submitted,first:document.querySelector('#first').value,why:document.querySelector('#why').value,country:document.querySelector('#country').value})})`);
     assert.equal(application[0].result.submitted,false);assert.equal(application[0].result.first,'Fixture');assert.ok(application[0].result.why.includes('reliable services'));
     assert.equal(application[0].result.country,'United States of America');
-    // Saved for this profile and site in the wording the site showed, not ChatGPT's.
+    // The site records the question in its own wording; it is a site default, and saved, only once a second job asks it.
     const memory=await evaluate(`chrome.storage.local.get('siteAnswers').then(data=>data.siteAnswers)`);
     const book=Object.values(memory[profile.id])[0];
-    assert.ok(Object.values(book.answers).some(entry=>entry.label==='Country' && entry.answer==='United States of America'),JSON.stringify(book));
-    assert.ok(!Object.values(book.answers).some(entry=>entry.label==='First name'),'contact details stay in the profile');
-    const memoryDetail=await evaluate(`chrome.runtime.sendMessage({action:'detail',id:${JSON.stringify(job.id)}})`);
-    assert.ok(memoryDetail.siteMemory[0].count>=1,JSON.stringify(memoryDetail.siteMemory));
+    assert.ok(Object.entries(book.seen).some(([key,jobs])=>key.includes('country') && jobs[job.id]==='United States of America'),JSON.stringify(book));
+    assert.ok(!Object.keys(book.seen).some(key=>key.includes('first name')),'contact details stay in the profile');
+    assert.deepEqual(book.answers,{},'a question one job asked is not a site default yet');
     console.log('PASS: real worker opens and groups both tabs, extracts JD, sends/reads ChatGPT fixtures, exports, scans, and fills approved answers.');
     // One click: a question appears, Auto-fill asks only about it, fills, and stops short of Submit.
     await evaluate(`chrome.scripting.executeScript({target:{tabId:${live.run.jobTabId}},func:()=>{const box=document.createElement('input');box.id='extra';box.setAttribute('aria-label','Newly revealed question');document.querySelector('#first').form.append(box);}})`);

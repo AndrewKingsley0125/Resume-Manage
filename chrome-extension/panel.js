@@ -153,11 +153,17 @@ function handleCollectedResponse(message) {
     preview();setStep('questions');return {message:'All answers replaced with the completed ChatGPT response. Review them, then click Fill form.'};
   });
 }
+// Your edits to the resume JSON are kept while the same resume is shown again.
+let reviewedResume=null,reviewedSource=null;
+const resumeEdited=()=>reviewedResume!=null && $('resume-response-preview').value.trim()!==reviewedResume.trim();
 function showResumeReview(response) {
   $('resume-response-review').hidden=!response;
   if(response)$('jd-details').open=false;
-  $('resume-response-preview').value=response || '';
-  $('approve-resume-response').checked=false;
+  const keep=response && response===reviewedSource && resumeEdited();
+  if(!keep){$('resume-response-preview').value=prettyResume(response);$('approve-resume-response').checked=false;}
+  reviewedSource=response || null;reviewedResume=response ? prettyResume(response) : null;
+  showCompanyNeeded();
+  $('reset-resume-response').hidden=!resumeEdited();
   $('resume-response-target').textContent=selected ? `${selected.company || 'Hiring company'} | ${selected.title || selected.url}` : '';
 }
 // Answers saved for this profile on the sites of the scanned form.
@@ -297,9 +303,26 @@ for (const [id,action] of [['paste-resume','readResume'],['paste-answers','readA
   const response = $('response').value.trim();if (!response) throw new Error('Paste a response first.');
   const result = await call(action,{response});$('response').value = '';await loadDetail();setStep('questions');return result;
 }));
+function prettyResume(response) {
+  if(!response)return '';
+  try {return JSON.stringify(JSON.parse(response),null,2);} catch(_) {return response;}
+}
+// Neither the job nor the resume JSON names the company: ask for it before exporting.
+function jsonCompany(text) {try {return String(JSON.parse(text).company || '').trim();} catch(_) {return null;}}
+function companyNeeded() {
+  if(!reviewedSource || String(selected?.company || '').trim())return false;
+  return jsonCompany($('resume-response-preview').value)==='';
+}
+function showCompanyNeeded() {$('review-company-row').hidden=!companyNeeded();}
+$('resume-response-preview').addEventListener('input',()=>{$('reset-resume-response').hidden=!resumeEdited();showCompanyNeeded();});
+$('reset-resume-response').addEventListener('click',()=>{$('resume-response-preview').value=reviewedResume || '';$('reset-resume-response').hidden=true;});
 $('confirm-resume-response').addEventListener('click',()=>perform(async()=>{
   if(!$('approve-resume-response').checked)throw new Error('Confirm that this is the correct resume before exporting.');
-  const result=await call('confirmResume',{confirmed:true});await loadDetail();setStep('questions');return result;
+  const edited=resumeEdited();
+  if(edited){try{JSON.parse($('resume-response-preview').value);}catch(error){throw new Error(`The resume JSON has a mistake: ${error.message}. Fix it, or click Undo my edits.`);}}
+  const company=companyNeeded()?$('review-company').value.trim():'';
+  if(companyNeeded() && !company){$('review-company').focus();throw new Error('Enter the hiring company. It names the folder the resume is saved in.');}
+  const result=await call('confirmResume',{confirmed:true,...(edited?{response:$('resume-response-preview').value}:{}),...(company?{company}:{})});await loadDetail();setStep('questions');return result;
 }));
 $('complete').addEventListener('click', () => perform(async () => {if (!confirm('Confirm that you submitted or ended this application yourself? Its job tab, ChatGPT tab and this window will close.')) return;const result = await call('complete',{confirmed:true});await refresh();setStep('finish');return result;}));
 if (chrome.runtime.onMessage) chrome.runtime.onMessage.addListener(message => {

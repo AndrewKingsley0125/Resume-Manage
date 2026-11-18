@@ -1,5 +1,5 @@
 (() => {
-  const version = 14;
+  const version = 16;
   if (globalThis.ResumeApplyChat && globalThis.ResumeApplyChat.version === version) return;
   globalThis.ResumeApplyChat?.stopResponseWatch?.();
   const visible = el => !!el && el.getClientRects().length > 0;
@@ -78,7 +78,19 @@
   };
   const assistantMessages = () => messageNodes('assistant');
   const userMessages = () => messageNodes('user');
-  const generating = () => [...document.querySelectorAll('[data-testid="stop-button"],button[aria-label*="Stop generating" i],button[aria-label*="Stop streaming" i]')].some(visible);
+  // ChatGPT is still at work while it shows a Stop control, or while its newest reply is only a
+  // thinking or searching status ("Thinking", "Thought for 12s", "Searching the web").
+  const STOP_CONTROLS = '[data-testid="stop-button"],[data-testid*="stop-button" i],#composer-submit-button[aria-label*="stop" i],button[aria-label*="Stop generating" i],button[aria-label*="Stop streaming" i],button[aria-label*="Stop answering" i],button[aria-label*="Stop thinking" i],button[aria-label*="Stop response" i]';
+  const WORKING_TEXT = /^(?:chatgpt said:?\s*)?(?:thinking|reasoning|thought for\b|searching|analy[sz]ing|reading documents)\b/i;
+  const pendingReply = () => {
+    const user = userMessages().at(-1);
+    const reply = assistantMessages().filter(node => !user || follows(user,node)).at(-1);
+    if (!reply) return false;
+    if (reply.querySelector('.result-streaming,[data-is-streaming="true"],[class*="streaming-animation"]')) return true;
+    const text = (reply.innerText || reply.textContent || '').replace(/\s+/g,' ').trim();
+    return !!text && text.length < 200 && WORKING_TEXT.test(text) && !/[{}]/.test(text);
+  };
+  const generating = () => [...document.querySelectorAll(STOP_CONTROLS)].some(visible) || pendingReply();
   const messageText = el => {
     if (!el) return '';
     const code = [...el.querySelectorAll('pre code')].map(x => x.textContent || x.innerText).filter(Boolean);
@@ -323,6 +335,12 @@
     return {candidates:candidates.slice(-20).reverse(),copyTargets:copyTargets.reverse().slice(0,5),url:location.href,title:document.title,replyCount:assistantMessages().length};
   }
   let responseWatch=null;
+  // How long the reply must stay unchanged, after ChatGPT stops generating, before it is read.
+  const QUIET_MS=1200;
+  function checkResponse() {
+    if(responseWatch)responseWatch.check();
+    return {watching:!!responseWatch};
+  }
   function stopResponseWatch() {
     if(!responseWatch)return;
     responseWatch.observer.disconnect();clearInterval(responseWatch.interval);clearTimeout(responseWatch.timeout);responseWatch=null;
@@ -331,34 +349,46 @@
     if(responseWatch?.receipt.marker===receipt.marker)return {watching:true};
     stopResponseWatch();
     const initial=responseSnapshot();
-    const watch={id,kind,receipt,signature:initial.signature,changedAt:Date.now(),notifying:false};
+    const watch={id,kind,receipt,signature:initial.signature,changedAt:Date.now(),notifying:false,laterAt:0};
+    // The ChatGPT tab is usually a background tab, where Chrome slows its timers to as little as
+    // once a minute. The extension's worker is not slowed, so it is asked to check again.
+    function later(ms) {
+      const at=Date.now()+ms;
+      if(watch.laterAt>Date.now() && watch.laterAt<=at)return;
+      watch.laterAt=at;
+      chrome.runtime.sendMessage({event:'chat-check-later',delay:ms}).catch(()=>{});
+    }
     async function check() {
       if(responseWatch!==watch || watch.notifying)return;
       const snapshot=responseSnapshot();
       if(snapshot.signature!==watch.signature){watch.signature=snapshot.signature;watch.changedAt=Date.now();}
       if(generating())return;
+      const quietFor=Date.now()-watch.changedAt;
       // ChatGPT's own error: press its Retry, twice at most, then hand the job back.
       const failed=chatError();
       if(failed) {
-        if(Date.now()-watch.changedAt<1800)return;
+        if(quietFor<QUIET_MS)return later(QUIET_MS-quietFor+50);
         if(failed.retry && (watch.retries || 0)<2){watch.retries=(watch.retries || 0)+1;failed.retry.click();watch.changedAt=Date.now();return;}
         watch.notifying=true;
         chrome.runtime.sendMessage({event:'chat-response-error',id,kind,marker:receipt.marker,text:failed.message.slice(0,300)}).catch(()=>{});
         stopResponseWatch();return;
       }
-      if(!snapshot.present || Date.now()-watch.changedAt<1800)return;
+      if(!snapshot.present)return;
+      if(quietFor<QUIET_MS)return later(QUIET_MS-quietFor+50);
       if(!snapshot.afterUser && (!receipt.responseBaseline || snapshot.signature===receipt.responseBaseline))return;
       if(!matchingRequest(receipt) && (!receipt.responseBaseline || snapshot.signature===receipt.responseBaseline))return;
       watch.notifying=true;
       try {
         const result=await chrome.runtime.sendMessage({event:'chat-response-ready',id,kind,marker:receipt.marker});
         if(responseWatch===watch && (result?.collected || result?.stop))stopResponseWatch();
+        else if(responseWatch===watch){watch.notifying=false;later(1500);}
       }catch(_){}finally{if(responseWatch===watch)watch.notifying=false;}
     }
+    watch.check=check;
     watch.observer=new MutationObserver(()=>{check();});watch.observer.observe(document.body,{childList:true,subtree:true,characterData:true});
     watch.interval=setInterval(check,1500);
     watch.timeout=setTimeout(()=>{if(responseWatch===watch){chrome.runtime.sendMessage({event:'chat-response-timeout',id,kind,marker:receipt.marker}).catch(()=>{});stopResponseWatch();}},20*60*1000);
     responseWatch=watch;return {watching:true};
   }
-  globalThis.ResumeApplyChat = {version,send,read,readForReview,readCandidate,collectCodeBlocks,watchResponse,stopResponseWatch,responseState};
+  globalThis.ResumeApplyChat = {version,send,read,readForReview,readCandidate,collectCodeBlocks,watchResponse,stopResponseWatch,checkResponse,responseState};
 })();

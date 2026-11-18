@@ -31,6 +31,14 @@ Auto-fill (and Full auto) never changes a field that already holds an answer: on
 
 **Company and revised resumes.** When the job description names no company, Full auto stops and asks for it; click the job's company in the app to enter or change it. After asking ChatGPT for changes to the resume, choose **Use revised resume** (the job's menu in the app, or the Resume step here): you review the new resume, and confirming replaces the exported PDF and DOCX in the same folder. Auto-fill then uploads the new resume on the form.
 
+**Review resume in Full auto.** A switch on the app's Auto apply page, saved per profile and off by default. Off: Full auto exports the resume ChatGPT wrote as soon as it is complete and goes straight on to the application. On: it stops so you can check or edit the resume, and carries on with the application after you confirm it.
+
+**Noticing a finished reply.** The ChatGPT tab usually sits behind the job tab, where Chrome slows its timers to as little as once a minute. The extension's background worker re-checks the reply instead, so a finished reply is read about 1.2 seconds after ChatGPT stops writing.
+
+**Workday.** A "Select One" dropdown is a button with a hidden validation box beside it; it is read as a dropdown and its menu rows are its choices. A searchable prompt (How did you hear about us?, school) is answered as text, then searched for (type, Enter) and the matching result is picked; the choice Workday shows as a selected item counts as its value. Built from public descriptions of Workday's markup, not yet checked on a live Workday form.
+
+**Editing the resume before export.** In the resume review (here, or **Edit JSON** in the app's Review resume) you can change any part of the JSON or paste a whole new one. What you confirm is exported; it is checked for valid resume JSON first, and **Undo my edits** goes back to what ChatGPT wrote.
+
 A leftover draft in the ChatGPT box is cleared before a prompt is sent. A finished job's tabs are taken out of their tab group before closing, so Chrome does not keep the group in your account.
 
 ## Manual application workflow
