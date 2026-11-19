@@ -6,63 +6,127 @@
 @tailwind utilities;
 
 @layer base {
+  /* Dark: GitHub's "Dark dimmed" palette. Slate grey instead of near-black, and soft
+     grey-blue text instead of white, so contrast stays readable without glare. */
   :root {
     color-scheme: dark;
-    --bg: #0f1115;
-    --bg-elev: #161922;
-    --bg-elev-2: #1d2230;
-    --border: #262b39;
-    --border-hover: #38415a;
-    --text: #e7ebf3;
-    --text-muted: #9aa3b2;
-    --accent: #6c8cff;
-    --accent-hover: #819cff;
-    --accent-ring: rgba(108, 140, 255, 0.18);
-    --accent-shadow: rgba(108, 140, 255, 0.35);
-    --danger: #ff5c7a;
-    --danger-hover: #ff7a93;
-    --danger-bg: rgba(255, 92, 122, 0.15);
-    --danger-border: rgba(255, 92, 122, 0.35);
-    --success: #34d399;
-    --success-hover: #6ee7b7;
-    --success-bg: rgba(52, 211, 153, 0.15);
-    --success-border: rgba(52, 211, 153, 0.40);
-    --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-    --surface-hover: rgba(255, 255, 255, 0.06);
-    --surface-hover-strong: rgba(255, 255, 255, 0.12);
-    --modal-backdrop: rgba(7, 9, 13, 0.55);
-    --scrollbar: #2a3041;
-    --scrollbar-hover: #364056;
+    --bg: #1c2128;
+    --bg-elev: #2d333b;
+    --bg-elev-2: #373e47;
+    /* Wells that hold cards (board columns): darker than the cards on them. */
+    --bg-sunken: #22272e;
+    --border: #4a525d;
+    --border-hover: #636e7b;
+    --text: #dce3eb;
+    --text-muted: #a3adb9;
+    --accent: #539bf5;
+    --accent-hover: #6cb6ff;
+    --accent-ring: rgba(83, 155, 245, 0.20);
+    --accent-shadow: rgba(83, 155, 245, 0.30);
+    /* Filled buttons carry white text: deeper shades keep it readable (about 4.5:1). */
+    --accent-solid: #316dca;
+    --accent-solid-hover: #2a5fb0;
+    --danger-solid: #c93c37;
+    --danger-solid-hover: #ad2e2c;
+    --danger: #e5534b;
+    --danger-hover: #f47067;
+    --danger-bg: rgba(229, 83, 75, 0.15);
+    --danger-border: rgba(229, 83, 75, 0.40);
+    --success: #57ab5a;
+    --success-hover: #6bc46d;
+    --success-bg: rgba(87, 171, 90, 0.15);
+    --success-border: rgba(87, 171, 90, 0.40);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.30);
+    --surface-hover: rgba(205, 217, 229, 0.06);
+    --surface-hover-strong: rgba(205, 217, 229, 0.10);
+    --modal-backdrop: rgba(28, 33, 40, 0.60);
+    --scrollbar: #444c56;
+    --scrollbar-hover: #545d68;
     --radius-lg: 18px;
     --radius-md: 12px;
+    /* Job states: GitHub Primer's functional colours (dark dimmed), one hue per state:
+       neutral, accent, severe, done, success, danger. Text, soft fill, and border.
+       The text uses the next lighter step of each Primer dimmed hue, so small labels stay
+       readable on cards (about 4.5:1 or better); fills and borders are Primer's own. */
+    --st-todo-fg: #9198a1;     --st-todo-bg: #656c7633;     --st-todo-line: #656c7666;
+    --st-progress-fg: #539bf5; --st-progress-bg: #4184e41a; --st-progress-line: #4184e466;
+    --st-manual-fg: #f69d50;   --st-manual-bg: #cc6b2c1a;   --st-manual-line: #cc6b2c66;
+    --st-review-fg: #b083f0;   --st-review-bg: #986ee226;   --st-review-line: #986ee266;
+    --st-done-fg: #6bc46d;     --st-done-bg: #46954a26;     --st-done-line: #46954a66;
+    --st-failed-fg: #f47067;   --st-failed-bg: #e5534b1a;   --st-failed-line: #e5534b66;
+    /* Auto apply board in the style of an Atlassian Jira board: Atlassian design tokens
+       (@atlaskit/tokens, dark theme): columns, cards and text. The status colours are below. */
+    --jr-column: #161A1D; --jr-card: #22272B; --jr-card-hover: #282E33;
+    --jr-shadow: 0px 0px 0px 1px #00000000, 0px 1px 1px #03040480, 0px 0px 1px #03040480;
+    --jr-text: #B6C2CF; --jr-subtle: #9FADBC; --jr-subtlest: #8C9BAB;
+    --jr-neutral: #A1BDD914; --jr-neutral-hover: #A6C5E229; --jr-border: #A6C5E229;
+    --jr-selected: #1C2B41; --jr-selected-line: #579DFF;
+    --jr-brand: #579DFF; --jr-brand-hover: #85B8FF; --jr-on-brand: #1D2125;
+    /* Status colours: Radix Colors (dark), one family so they match in brightness: step 3 for
+       soft fills, step 11 for text, step 9 for solid edges and dots. Slate, blue, orange,
+       violet, green and red. */
+    --lz-neutral-bg: #212225;   --lz-neutral-fg: #b0b4ba;   --lz-neutral-solid: #696e77;
+    --lz-info-bg: #0d2847;      --lz-info-fg: #70b8ff;      --lz-info-solid: #0090ff;
+    --lz-warning-bg: #331e0b;   --lz-warning-fg: #ffa057;   --lz-warning-solid: #f76b15;
+    --lz-discovery-bg: #291f43; --lz-discovery-fg: #baa7ff; --lz-discovery-solid: #6e56cf;
+    --lz-success-bg: #132d21;   --lz-success-fg: #3dd68c;   --lz-success-solid: #30a46c;
+    --lz-danger-bg: #3b1219;    --lz-danger-fg: #ff9592;    --lz-danger-solid: #e5484d;
   }
+  /* Light: GitHub's light palette, softened. No pure white surfaces and no pure black text,
+     which cuts glare while keeping text well above accessible contrast. */
   :root[data-theme='light'] {
     color-scheme: light;
-    --bg: #f4f6fb;
-    --bg-elev: #ffffff;
-    --bg-elev-2: #f7f9fd;
-    --border: #e3e8f0;
-    --border-hover: #c8d1e0;
-    --text: #1a1f2e;
-    --text-muted: #5e6878;
-    --accent: #4a6cf7;
-    --accent-hover: #3956e8;
-    --accent-ring: rgba(74, 108, 247, 0.18);
-    --accent-shadow: rgba(74, 108, 247, 0.28);
-    --danger: #e63858;
-    --danger-hover: #cf2444;
-    --danger-bg: rgba(230, 56, 88, 0.10);
-    --danger-border: rgba(230, 56, 88, 0.30);
-    --success: #16a34a;
-    --success-hover: #15803d;
-    --success-bg: rgba(22, 163, 74, 0.12);
-    --success-border: rgba(22, 163, 74, 0.35);
-    --shadow: 0 10px 30px rgba(20, 30, 60, 0.10);
-    --surface-hover: rgba(15, 20, 35, 0.04);
-    --surface-hover-strong: rgba(15, 20, 35, 0.08);
-    --modal-backdrop: rgba(25, 35, 60, 0.30);
-    --scrollbar: #d6dde8;
-    --scrollbar-hover: #c0c9d8;
+    --bg: #e1e6ec;
+    --bg-elev: #fbfcfd;
+    --bg-elev-2: #eef1f4;
+    --bg-sunken: #e9edf2;
+    --border: #c4ccd5;
+    --border-hover: #9ea8b3;
+    --text: #1b1f24;
+    --text-muted: #4b535d;
+    --accent: #0969da;
+    --accent-hover: #0550ae;
+    --accent-ring: rgba(9, 105, 218, 0.15);
+    --accent-shadow: rgba(9, 105, 218, 0.25);
+    --accent-solid: #0969da;
+    --accent-solid-hover: #0550ae;
+    --danger-solid: #cf222e;
+    --danger-solid-hover: #a40e26;
+    --danger: #cf222e;
+    --danger-hover: #a40e26;
+    --danger-bg: rgba(207, 34, 46, 0.08);
+    --danger-border: rgba(207, 34, 46, 0.30);
+    --success: #1a7f37;
+    --success-hover: #116329;
+    --success-bg: rgba(26, 127, 55, 0.10);
+    --success-border: rgba(26, 127, 55, 0.30);
+    --shadow: 0 10px 30px rgba(31, 35, 40, 0.08);
+    --surface-hover: rgba(31, 35, 40, 0.04);
+    --surface-hover-strong: rgba(31, 35, 40, 0.07);
+    --modal-backdrop: rgba(31, 35, 40, 0.35);
+    --scrollbar: #c9d1d9;
+    --scrollbar-hover: #afb8c1;
+    /* Job states: GitHub Primer's functional colours (light). */
+    --st-todo-fg: #59636e;     --st-todo-bg: #818b981f;     --st-todo-line: #818b9866;
+    --st-progress-fg: #0969da; --st-progress-bg: #ddf4ff;   --st-progress-line: #54aeff66;
+    --st-manual-fg: #bc4c00;   --st-manual-bg: #fff1e5;     --st-manual-line: #fb8f4466;
+    --st-review-fg: #8250df;   --st-review-bg: #fbefff;     --st-review-line: #c297ff66;
+    --st-done-fg: #1a7f37;     --st-done-bg: #dafbe1;       --st-done-line: #4ac26b66;
+    --st-failed-fg: #d1242f;   --st-failed-bg: #ffebe9;     --st-failed-line: #ff818266;
+    /* Jira-style board: Atlassian design tokens (light theme). */
+    --jr-column: #F7F8F9; --jr-card: #FFFFFF; --jr-card-hover: #F1F2F4;
+    --jr-shadow: 0px 1px 1px #091E4240, 0px 0px 1px #091E424F;
+    --jr-text: #172B4D; --jr-subtle: #44546F; --jr-subtlest: #626F86;
+    --jr-neutral: #091E420F; --jr-neutral-hover: #091E4224; --jr-border: #091E4224;
+    --jr-selected: #E9F2FF; --jr-selected-line: #0C66E4;
+    --jr-brand: #0C66E4; --jr-brand-hover: #0055CC; --jr-on-brand: #FFFFFF;
+    /* Status colours: Radix Colors (light), the same steps as the dark theme. */
+    --lz-neutral-bg: #f0f0f3;   --lz-neutral-fg: #60646c;   --lz-neutral-solid: #8b8d98;
+    --lz-info-bg: #e6f4fe;      --lz-info-fg: #0d74ce;      --lz-info-solid: #0090ff;
+    --lz-warning-bg: #ffefd6;   --lz-warning-fg: #cc4e00;   --lz-warning-solid: #f76b15;
+    --lz-discovery-bg: #f4f0fe; --lz-discovery-fg: #6550b9; --lz-discovery-solid: #6e56cf;
+    --lz-success-bg: #e6f6eb;   --lz-success-fg: #218358;   --lz-success-solid: #30a46c;
+    --lz-danger-bg: #feebec;    --lz-danger-fg: #ce2c31;    --lz-danger-solid: #e5484d;
   }
   html, body { height: 100%; background: var(--bg); }
   body { @apply m-0 font-sans text-ink antialiased select-none; }
@@ -89,6 +153,8 @@
   body[data-view='picker'] .only-list, body[data-view='picker'] .only-workspace,
   body[data-view='workspace'] .only-list, body[data-view='workspace'] .only-picker,
   body[data-view='discovery'] .only-list, body[data-view='discovery'] .only-picker { display: none !important; }
+  /* Inside a profile the bar shows the profile, not the app's title. */
+  body[data-view='workspace'] .only-not-workspace { display: none !important; }
   /* Toggled by scripts as a class. */
   .hidden { display: none !important; }
 }
@@ -96,9 +162,12 @@
 /* Shared building blocks, used across screens and by scripts that build elements. */
 @layer components {
   .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-[10px] border border-transparent px-4 py-2 text-sm font-semibold leading-tight transition-colors cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring; }
-  .btn-primary { @apply bg-accent text-white shadow-accent hover:bg-accent-hover; }
+  /* Flat: no coloured glow under the button, which tired the eyes with several on screen. */
+  .btn-primary { @apply text-white; background-color: var(--accent-solid); }
+  .btn-primary:hover { background-color: var(--accent-solid-hover); }
   .btn-ghost { @apply border-line bg-transparent text-ink hover:border-line-strong hover:bg-hover; }
-  .btn-danger { @apply bg-danger text-white hover:bg-danger-hover; }
+  .btn-danger { @apply text-white; background-color: var(--danger-solid); }
+  .btn-danger:hover { background-color: var(--danger-solid-hover); }
   .btn-sm { @apply rounded-lg px-3 py-1.5 text-[13px]; }
   .btn-icon-sm { @apply h-7 w-7 rounded-lg p-0; }
   .icon-btn { @apply inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-elev text-sm text-muted transition-colors hover:bg-hover hover:text-ink; }
@@ -129,4 +198,71 @@
   .toast { @apply fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-xl border border-line bg-elev px-4 py-3 text-sm text-ink shadow-soft; }
   .toast.error { @apply border-danger-line bg-danger-bg text-danger; }
   .sr-only { @apply absolute h-px w-px overflow-hidden whitespace-nowrap border-0 p-0; margin: -1px; clip: rect(0, 0, 0, 0); }
+}
+
+/* Auto apply board: a card that reached the next stage glows once, and the stage it reached
+   fills in. Scripts add .is-arrived; the glide between columns is done in script (FLIP). */
+@keyframes job-card-arrived {
+  0% { box-shadow: 0 0 0 0 var(--accent-shadow); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+@keyframes job-stage-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.job-card.is-arrived { animation: job-card-arrived 900ms ease-out 120ms; }
+.job-card.is-arrived .job-stage.is-current { transform-origin: left center; animation: job-stage-fill 600ms cubic-bezier(0.2, 0.8, 0.2, 1) 200ms both; }
+@media (prefers-reduced-motion: reduce) {
+  .job-card, .job-card .job-stage { animation: none !important; transition: none !important; }
+}
+
+
+/* The job's details panel slides in from the right; its backdrop fades in. */
+@keyframes job-details-in { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes job-details-fade { from { opacity: 0; } to { opacity: 1; } }
+.job-details:not(.hidden) .job-details-panel { animation: job-details-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.job-details:not(.hidden) .modal-backdrop { animation: job-details-fade 180ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .job-details .job-details-panel, .job-details .modal-backdrop { animation: none; }
+}
+
+/* Chart series colours (Manage process insights): the reference categorical palette, validated
+   for colour-vision deficiency and contrast against the app's card surfaces, in a fixed order.
+   Dark is the default theme; light has its own steps. */
+:root {
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500;
+  --viz-5: #d55181; --viz-6: #0ca30c; --viz-7: #9085e9; --viz-8: #e66767;
+}
+:root[data-theme='light'] {
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100;
+  --viz-5: #e87ba4; --viz-6: #008300; --viz-7: #6250d6; --viz-8: #e34948;
+}
+.viz-bg-0 { background-color: var(--viz-1); } .viz-bg-1 { background-color: var(--viz-2); }
+.viz-bg-2 { background-color: var(--viz-3); } .viz-bg-3 { background-color: var(--viz-4); }
+.viz-bg-4 { background-color: var(--viz-5); } .viz-bg-5 { background-color: var(--viz-6); }
+.viz-bg-6 { background-color: var(--viz-7); } .viz-bg-7 { background-color: var(--viz-8); }
+
+/* Dragging a card between columns. */
+body.is-dragging-card, body.is-dragging-card * { cursor: grabbing !important; user-select: none; }
+.job-card { touch-action: none; }
+.job-card.is-drag-source { opacity: 0.35; box-shadow: none; outline: 2px dashed var(--border-hover); outline-offset: -2px; }
+.job-drag-ghost { position: fixed; z-index: 80; margin: 0; pointer-events: none; transform-origin: center;
+  box-shadow: 0 22px 48px -12px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3) !important; }
+.ext-column { transition: box-shadow 160ms ease, opacity 160ms ease, background-color 160ms ease, filter 160ms ease; }
+.ext-column[data-drop='ok'] { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--lz-info-solid) 45%, transparent); }
+.ext-column[data-drop='ok'].is-drop-hover { box-shadow: inset 0 0 0 2px var(--lz-info-solid); background-color: color-mix(in srgb, var(--lz-info-solid) 9%, var(--jr-column)); }
+.ext-column[data-drop='no'] { opacity: 0.5; filter: saturate(0.5); }
+.ext-column[data-drop='no'].is-drop-hover { opacity: 0.65; box-shadow: inset 0 0 0 2px var(--lz-danger-solid); }
+.job-drag-hint { position: fixed; z-index: 81; pointer-events: none; max-width: 300px; border-radius: 10px; padding: 6px 10px;
+  font-size: 12px; font-weight: 600; line-height: 1.35; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4); }
+.job-drag-hint[data-tone='ok'] { background: var(--lz-info-bg); color: var(--lz-info-fg); border-color: color-mix(in srgb, var(--lz-info-solid) 40%, transparent); }
+.job-drag-hint[data-tone='no'] { background: var(--lz-danger-bg); color: var(--lz-danger-fg); border-color: color-mix(in srgb, var(--lz-danger-solid) 40%, transparent); }
+.job-drag-hint[hidden] { display: none; }
+@keyframes job-drag-shake { 0%, 100% { translate: 0 0; } 20% { translate: -7px 0; } 40% { translate: 7px 0; } 60% { translate: -4px 0; } 80% { translate: 4px 0; } }
+.job-drag-ghost.is-refused { animation: job-drag-shake 300ms ease-in-out; }
+@keyframes job-card-bounce { 0%, 100% { translate: 0 0; } 30% { translate: -4px 0; } 60% { translate: 3px 0; } }
+.job-card.is-bounced { animation: job-card-bounce 450ms ease-in-out; }
+@media (prefers-reduced-motion: reduce) {
+  .job-drag-ghost, .job-drag-ghost.is-refused, .job-card.is-bounced { animation: none !important; transition: none !important; }
 }

@@ -229,6 +229,7 @@ function processRowFromDisk(companyName, relativePath, disk, folderPath) {
     jdPath: disk.jdPath,
     hasJd: disk.hasJd,
     hasResume: disk.hasResume,
+    jobUrl: disk.jobUrl || '',
   };
 }
 
@@ -272,9 +273,32 @@ function checkCompanyDuplicate(saveFolder, companyNameRaw, exceptPath = null) {
   };
 }
 
+// The job posting's link, kept beside JD.txt in each application folder so it travels with
+// the folder (zip export and import included).
+const JOB_LINK_FILE = 'job-link.txt';
+function cleanJobUrl(raw) {
+  const text = String(raw || '').trim().split(/\r?\n/)[0].trim();
+  if (!text || text.length > 2000) return '';
+  try {
+    const url = new URL(text);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+function readJobLink(folderPath) {
+  try { return cleanJobUrl(fs.readFileSync(path.join(folderPath, JOB_LINK_FILE), 'utf-8')); } catch (_) { return ''; }
+}
+function writeJobLink(folderPath, url) {
+  const file = path.join(folderPath, JOB_LINK_FILE);
+  if (url) fs.writeFileSync(file, url + '\n', 'utf-8');
+  else if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
 function scanCompanyFolder(folderPath) {
   let pdfPath = null;
   let jdPath = null;
+  let jobUrl = '';
   try {
     const sub = fs.readdirSync(folderPath, { withFileTypes: true });
     for (const f of sub) {
@@ -282,6 +306,7 @@ function scanCompanyFolder(folderPath) {
       const lower = f.name.toLowerCase();
       if (!pdfPath && lower.endsWith('.pdf')) pdfPath = path.join(folderPath, f.name);
       if (!jdPath && lower === 'jd.txt') jdPath = path.join(folderPath, f.name);
+      if (!jobUrl && lower === JOB_LINK_FILE) jobUrl = readJobLink(folderPath);
     }
   } catch (_) {
     return null;
@@ -293,7 +318,7 @@ function scanCompanyFolder(folderPath) {
     return null;
   }
   const date = stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs || 0;
-  return { date, pdfPath, jdPath, hasJd: !!jdPath, hasResume: !!pdfPath };
+  return { date, pdfPath, jdPath, hasJd: !!jdPath, hasResume: !!pdfPath, jobUrl };
 }
 
 function toRelativePath(saveFolder, absolutePath) {
@@ -360,7 +385,37 @@ function loadProcesses(_profileId, saveFolder) {
   if (!saveFolder || typeof saveFolder !== 'string' || !fs.existsSync(saveFolder)) {
     return [];
   }
-  return scanSaveFolder(saveFolder);
+  const rows = scanSaveFolder(saveFolder);
+  // Resumes Auto apply exported before job links were saved: their job is still known to the
+  // extension bridge, so its link is filled in (and saved in the folder from now on).
+  const known = extensionBridge && typeof extensionBridge.exportedLinks === 'function' ? extensionBridge.exportedLinks() : [];
+  if (known.length) {
+    const byFolder = new Map(known.map(item => [path.resolve(item.folder), cleanJobUrl(item.url)]));
+    for (const row of rows) {
+      if (row.jobUrl || !row.folderPath) continue;
+      const url = byFolder.get(path.resolve(row.folderPath));
+      if (!url) continue;
+      row.jobUrl = url;
+      try { writeJobLink(row.folderPath, url); } catch (_) { /* shown now; saved next time */ }
+    }
+  }
+  return rows;
+}
+
+/** Save (or, with an empty link, remove) the job link of one application folder. */
+function setProcessJobLink(saveFolder, relativePath, rawUrl) {
+  if (!saveFolder || typeof saveFolder !== 'string') return { error: 'No save folder.' };
+  const folderPath = resolveRelativePath(saveFolder, relativePath);
+  if (!folderPath || !fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) return { error: 'This application folder no longer exists.' };
+  const text = String(rawUrl || '').trim();
+  const url = cleanJobUrl(text);
+  if (text && !url) return { error: 'Enter a full link starting with http:// or https://.' };
+  try {
+    writeJobLink(folderPath, url);
+    return { ok: true, jobUrl: url };
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err) };
+  }
 }
 
 function syncProcesses(profileId, saveFolder) {
@@ -1027,6 +1082,12 @@ async function exportPdf(args) {
       }
     }
 
+    // The job posting's link, when the export knows it (Auto apply always does).
+    const jobUrl = cleanJobUrl(args && args.jobUrl);
+    if (jobUrl) {
+      try { writeJobLink(companyFolder, jobUrl); } catch (linkErr) { console.error('Failed to write job link:', linkErr); }
+    }
+
     return { path: outPath, docxPath, folder: companyFolder, jdPath, jdError: jdError || undefined };
   } catch (err) {
     console.error('exportPdf failed:', err);
@@ -1309,7 +1370,7 @@ app.whenReady().then(async () => {
         saveFolder: profile.saveFolder,
         companyName: company,
         fileName: 'resume.pdf',
-        jd: job.jd, profileId: profile.id, resumeData: resume, style: job.style,
+        jd: job.jd, jobUrl: job.url, profileId: profile.id, resumeData: resume, style: job.style,
         ...(replace && job.files && job.files.folder ? {replaceIn: job.files.folder} : {}),
       });
       if (result.error) return result;
@@ -1401,6 +1462,16 @@ app.whenReady().then(async () => {
     deleteProcessesData(profileId)
   );
   ipcMain.handle('process:readJd', (_event, filePath) => readJdFile(filePath));
+  ipcMain.handle('process:setJobLink', (_event, saveFolder, relativePath, url) =>
+    setProcessJobLink(saveFolder, relativePath, url)
+  );
+  // Opens a saved job link in the default browser: web links only.
+  ipcMain.handle('process:openJobLink', async (_event, url) => {
+    const clean = cleanJobUrl(url);
+    if (!clean) return { error: 'Not a web link.' };
+    try { await shell.openExternal(clean); return { ok: true }; }
+    catch (err) { return { error: err && err.message ? err.message : String(err) }; }
+  });
   ipcMain.handle('process:readResume', (_event, filePath) =>
     readResumeFile(filePath)
   );

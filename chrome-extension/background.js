@@ -176,7 +176,61 @@ async function siteMemory(job,run) {
   const books=(await siteBooks())[job.profileId] || {},basis=profileBasis(job.profile);
   return [...new Set((run.fields || []).map(field=>field.site).filter(Boolean))].map(site=>({site,count:siteAnswerCount(books[site],basis)}));
 }
+// ---------- Focus emulation ----------
+// Chrome fires no focus events in a window that is not the focused one, and many job-site
+// dropdowns and ChatGPT's editor only react to real focus. Instead of bringing each job's
+// window to the front, the extension attaches Chrome's debugger to the job's tabs and turns
+// on focus emulation: each page then behaves as the focused page while it stays behind your
+// other windows. Chrome shows a "started debugging this browser" bar while it is attached
+// (hidden when Chrome runs with --silent-debugger-extension-api). Closing a tab detaches it.
+// If you click Cancel on that bar, it stays off until Chrome restarts.
+const emulated = new Map();
+const BOT_CHECK_FRAME = /^https?:\/\/([^/]+\.)?(challenges\.cloudflare\.com|cloudflare\.com\/cdn-cgi|hcaptcha\.com|recaptcha\.net|google\.com\/recaptcha|arkoselabs\.com|funcaptcha\.com)/i;
+async function focusEmulationOff() {return (await chrome.storage.session.get('focusEmulationOff')).focusEmulationOff === true;}
+async function emulateFocus(tabId) {
+  if (!chrome.debugger || !Number.isInteger(tabId)) return false;
+  if (emulated.has(tabId)) return emulated.get(tabId);
+  const ready = (async () => {
+    if (await focusEmulationOff()) return false;
+    const target = {tabId};
+    try {await chrome.debugger.attach(target,'1.3');}
+    catch (error) {
+      // Already attached by this extension (the worker restarted): keep using it.
+      if (!/already attached/i.test(error.message || '')) return false;
+    }
+    try {
+      await chrome.debugger.sendCommand(target,'Emulation.setFocusEmulationEnabled',{enabled:true});
+      // Frames from other sites (iCIMS, Workday embeds) are separate targets: emulate focus there too.
+      // Only frames, never workers, and never a bot check's own frame (see the listener below).
+      await chrome.debugger.sendCommand(target,'Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:false,flatten:true,filter:[{type:'iframe'}]}).catch(() => {});
+      return true;
+    } catch (_) {
+      await chrome.debugger.detach(target).catch(() => {});
+      return false;
+    }
+  })();
+  emulated.set(tabId, ready);
+  const ok = await ready;
+  if (!ok) emulated.delete(tabId);
+  return ok;
+}
+chrome.debugger?.onEvent.addListener((source, method, params) => {
+  if (method !== 'Target.attachedToTarget' || !params?.sessionId) return;
+  // Bot checks (Cloudflare, reCAPTCHA, hCaptcha) need no focus help: leave their frames alone.
+  if (params.targetInfo?.type !== 'iframe' || BOT_CHECK_FRAME.test(params.targetInfo?.url || '')) {
+    chrome.debugger.sendCommand(source,'Target.detachFromTarget',{sessionId:params.sessionId}).catch(() => {});
+    return;
+  }
+  chrome.debugger.sendCommand({...source,sessionId:params.sessionId},'Emulation.setFocusEmulationEnabled',{enabled:true}).catch(() => {});
+});
+chrome.debugger?.onDetach.addListener((source, reason) => {
+  if (!Number.isInteger(source.tabId)) return;
+  emulated.delete(source.tabId);
+  if (reason === 'canceled_by_user') chrome.storage.session.set({focusEmulationOff:true}).catch(() => {});
+});
+chrome.tabs.onRemoved.addListener(tabId => emulated.delete(tabId));
 async function page(tabId, method, args = [], frameId = 0) {
+  await emulateFocus(tabId);
   // Lets a fill read React's own value for a field (see page-main.js).
   if(method==='fill')await chrome.scripting.executeScript({target:{tabId,frameIds:[frameId]},world:'MAIN',files:['page-main.js']}).catch(()=>{});
   await chrome.scripting.executeScript({target:{tabId,frameIds:[frameId]},files:['page-tools.js']});
@@ -191,13 +245,24 @@ const quietChat = (tabId, method, ...args) => runChat(tabId, method, args, false
 async function runChat(tabId, method, args, takeFocus) {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url || new URL(tab.url).hostname !== 'chatgpt.com') throw new Error('The assigned ChatGPT tab is no longer on chatgpt.com.');
-  if (method === 'send' || method === 'collectCodeBlocks') {
-    if(takeFocus) {
-      await chrome.tabs.update(tabId,{active:true});
-      await chrome.windows.update(tab.windowId,{focused:true});
-    }
-    await waitComplete(tabId);
+  const focusing = takeFocus && (method === 'send' || method === 'collectCodeBlocks');
+  // With focus emulation the ChatGPT tab works behind other windows; without it, its window
+  // is brought to the front as before.
+  const emulating = focusing ? await emulateFocus(tabId) : false;
+  if (focusing) {
+    await chrome.tabs.update(tabId,{active:true});
+    if (!emulating) await chrome.windows.update(tab.windowId,{focused:true});
   }
+  if (method === 'send' || method === 'collectCodeBlocks') await waitComplete(tabId);
+  try {return await runChatScript(tabId, method, args);}
+  catch (error) {
+    // The editor ignored the prompt while its window was in the background: once more in front.
+    if (!emulating || method !== 'send' || !/editor is empty after insertion/.test(error.message || '')) throw error;
+    await chrome.windows.update(tab.windowId,{focused:true});
+    return runChatScript(tabId, method, args);
+  }
+}
+async function runChatScript(tabId, method, args) {
   // Native editor commands must run in the page's editing context.
   // Keep response monitoring isolated so it can still use chrome.runtime.
   const world = method === 'send' ? 'MAIN' : 'ISOLATED';
@@ -224,7 +289,7 @@ async function readChatJson(run, receipt, parse, expectedPrompt, {quiet=false}={
   }
   let response=fromCandidates(blocks.candidates);
   if(response) {
-    await new Promise(resolve=>setTimeout(resolve,750));
+    await new Promise(resolve=>setTimeout(resolve,350));
     const stable=await read(run.chatTabId,'collectCodeBlocks');
     if(stable.url!==blocks.url || !stable.candidates.some(value=>{try{return JSON.stringify(JSON.parse(parse(value)))===JSON.stringify(JSON.parse(response));}catch(_){return false;}}))throw new Error('The JSON block is still changing. Wait and read again.');
     return {response,url:blocks.url,matched:false};
@@ -357,14 +422,15 @@ async function collectMonitoredResponse(message,sender) {
 }
 async function resumeResponseMonitors() {
   const all=await runs(),{runAnchors={}}=await chrome.storage.local.get('runAnchors');
-  for(const [id,value] of Object.entries({...runAnchors,...all})) {
-    if(value.responseMonitor?.status!=='waiting')continue;
+  // Every job's ChatGPT tab is checked at the same time, not one after another.
+  await Promise.all(Object.entries({...runAnchors,...all}).map(async ([id,value]) => {
+    if(value.responseMonitor?.status!=='waiting')return;
     try {
       const run=all[id] || await recoverRun(id),receipt=run[value.responseMonitor.kind==='resume'?'resumeReceipt':'answerReceipt'];
-      if(value.responseMonitor.kind==='answers' && !run.fields?.length){await saveRun(id,{responseMonitor:{...value.responseMonitor,status:'error',message:'The question scan was cleared. Scan the application again before requesting answers.'}});continue;}
+      if(value.responseMonitor.kind==='answers' && !run.fields?.length){await saveRun(id,{responseMonitor:{...value.responseMonitor,status:'error',message:'The question scan was cleared. Scan the application again before requesting answers.'}});return;}
       if(receipt){await quietChat(run.chatTabId,'watchResponse',{id,kind:value.responseMonitor.kind,receipt});await quietChat(run.chatTabId,'checkResponse').catch(()=>{});}
     }catch(_){}
-  }
+  }));
 }
 const outcomeKey=field=>`${field.frameId}|${field.type}|${field.label}`;
 const AUTO_ROUNDS=4,AUTO_PAGES=15;
@@ -431,6 +497,7 @@ async function settleFill(id,run,results,{allowPicks=true}={}) {
   if(!current.autopilot?.active)return done;
   const autopilot={...current.autopilot,filled:current.autopilot.filled+done.filled,failed:[...current.autopilot.failed,...done.failures]};
   await saveRun(id,{autopilot});
+  // Questions still waiting for ChatGPT (or revealed by this fill) are asked next.
   return done.newQuestions && autopilot.round<AUTO_ROUNDS?autoFillStep(id):advanceOrFinish(id);
 }
 async function completePicks(id,run,response) {
@@ -506,19 +573,24 @@ async function autoFillStep(id) {
   // what you typed while ChatGPT was answering counts too.
   const filled=await filledNow(run),hasValue=field=>filled.has(field.id)?filled.get(field.id):answeredByYou(field);
   const unasked=recalled.unasked.filter(fieldId=>{const field=(run.fields || []).find(item=>item.id===fieldId);return !field || !hasValue(field);});
+  // Answers already known (profile, saved site answers, earlier replies) are filled first,
+  // without waiting for ChatGPT. Questions they reveal are then asked together with the rest,
+  // in one ChatGPT round instead of two.
+  const attempted=new Set(autopilot.attempted);
+  const due=field=>!attempted.has(`${field.pageUrl}|${outcomeKey(field)}`) && !hasValue(field);
+  const requested=answerableQuestions(run.fields).filter(field=>!field.manualOnly && field.type!=='file' && due(field)).map(field=>({id:field.id,answer:recalled.answers.find(item=>item.id===field.id)?.answer})).filter(item=>item.answer!=null && item.answer!=='');
+  if(requested.length) {
+    await request(jobPath(id)+'/status',{status:'answers-reviewed'});
+    const results=await fillFields(id,run,requested);
+    return settleFill(id,await getRun(id),results);
+  }
   if(unasked.length) {
     if(autopilot.round>=AUTO_ROUNDS)return finishAutoFill(id);
     await saveRun(id,{autopilot:{...autopilot,round:autopilot.round+1}});
     const {count}=await askQuestions(id,run,unasked);
     return {message:`Asked ChatGPT ${count} question${count===1?'':'s'}. Auto-fill will continue when it replies.`};
   }
-  const attempted=new Set(autopilot.attempted);
-  const due=field=>!attempted.has(`${field.pageUrl}|${outcomeKey(field)}`) && !hasValue(field);
-  const requested=answerableQuestions(run.fields).filter(field=>!field.manualOnly && field.type!=='file' && due(field)).map(field=>({id:field.id,answer:recalled.answers.find(item=>item.id===field.id)?.answer})).filter(item=>item.answer!=null && item.answer!=='');
-  if(!requested.length)return advanceOrFinish(id);
-  await request(jobPath(id)+'/status',{status:'answers-reviewed'});
-  const results=await fillFields(id,run,requested);
-  return settleFill(id,await getRun(id),results);
+  return advanceOrFinish(id);
 }
 // Moves on only when this page is complete, so a form is never pushed past a gap.
 // Clicks the posting's Apply button or tab. When it opens the form in a new tab, that tab
@@ -587,7 +659,7 @@ async function advanceOrFinish(id) {
   const moved=await page(run.jobTabId,'clickNext',[],frameId).catch(()=>null);
   if(!moved)return finishAutoFill(id);
   await saveRun(id,{autopilot:{...autopilot,round:0,attempted:[],page:autopilot.page+1,pageFailures:autopilot.failed.length,previousPage:pageSignature(fields)}});
-  await new Promise(resolve=>setTimeout(resolve,800));
+  await new Promise(resolve=>setTimeout(resolve,400));
   await waitComplete(run.jobTabId);
   await page(run.jobTabId,'settled').catch(()=>{});
   return autoFillPage(id);
@@ -610,23 +682,47 @@ async function finishAutoFill(id,{closing='This is the last page Auto-fill can r
 }
 // Carries on with Auto-fill once the user is past a CAPTCHA, sign-in or code, even when no
 // side panel is open. Runs on the background heartbeat.
+// Each job carries on by itself: one job filling a long page never holds up another.
 async function resumeWaitingAutoFill() {
-  for (const [id, run] of Object.entries(await runs())) {
-    if (!run.autopilot?.waiting || locks.has(id)) continue;
+  await Promise.all(Object.entries(await runs()).map(async ([id, run]) => {
+    if (!run.autopilot?.waiting || locks.has(id)) return;
     locks.add(id);
     try {
-      if (await pageBlocker(run)) continue;
+      if (await pageBlocker(run)) return;
       await saveRun(id,{autopilot:{...run.autopilot,waiting:null}});
       const outcome = await autoFillPage(id);
       chrome.runtime.sendMessage({event:'fill-progress',id,message:outcome.message}).catch(() => {});
     } catch (_) { /* reported through the job's progress */ } finally {locks.delete(id);}
-  }
+  }));
 }
 // ---------- Full auto: the whole application from one click ----------
 // Opens the pages, reads the JD, has ChatGPT write the resume, exports it, then Auto-fills the
 // application page by page. The first blocker stops it and hands that step back to you, with the
 // reason, in the Resume Apply window and the app. It never clicks Submit.
 const FULL_AUTO_MIN_JD = 200;
+// Full auto reads the JD as soon as the job page has loaded, but many sites draw the
+// description by script a few seconds later. Detect JD, clicked by hand, reads it after
+// that has happened. So the page is read again for a while before the JD counts as missing.
+const FULL_AUTO_JD_TRIES = 8, FULL_AUTO_JD_WAIT_MS = 2500;
+async function fullAutoPosting(id, {tries = FULL_AUTO_JD_TRIES, waitMs = FULL_AUTO_JD_WAIT_MS} = {}) {
+  let best = null, lastError = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, waitMs));
+    if (!(await getRun(id)).fullAuto?.active) break;
+    try {
+      const {job} = await command({action:'extract',id});
+      lastError = null;
+      if (String(job?.description || '').trim().length > String(best?.description || '').trim().length) best = job;
+      if (String(best?.description || '').trim().length >= FULL_AUTO_MIN_JD) return best;
+    } catch (error) {
+      // Site access is a real blocker; a page still loading is worth another try.
+      if (/Grant access/.test(error.message || '')) throw error;
+      lastError = error;
+    }
+  }
+  if (!best && lastError) throw lastError;
+  return best;
+}
 const FULL_AUTO_STEP = {pages:'Job', resume:'Resume', questions:'Questions'};
 async function startFullAuto(id) {
   const job = await request(jobPath(id));
@@ -664,7 +760,7 @@ async function fullAutoContinue(id) {
       }
       if (run.responseMonitor?.kind === 'resume' && run.responseMonitor.status === 'waiting') return {message:'Waiting for ChatGPT to write the resume. Full auto carries on when it finishes.'};
       // A JD you already reviewed is kept; otherwise it is read from the page.
-      let posting = job.jd ? {company:job.company || '', title:job.title || '', description:job.jd} : (await command({action:'extract',id})).job;
+      let posting = job.jd ? {company:job.company || '', title:job.title || '', description:job.jd} : await fullAutoPosting(id);
       const description = String(posting?.description || '').trim();
       if (description.length < FULL_AUTO_MIN_JD) return stopFullAuto(id,stage,description ? 'The job description read from the page looks incomplete.' : 'No job description was found on the page.');
       // The resume and its folder are named after the company: ask for it rather than guess.
@@ -947,10 +1043,15 @@ function runAppCommands(state) {
       // window changes nothing in the job, so it never waits.
       const quick = queued.action === 'focus' || queued.action === 'details';
       for (let i = 0; !quick && i < 600 && locks.has(job.id); i++) await new Promise(resolve => setTimeout(resolve, 500));
-      if (!quick) locks.add(job.id);
-      try {const result = await APP_COMMANDS[queued.action](job.id, queued);outcome = {ok:true, message:result?.message || 'Done.'};}
+      // Still busy after five minutes: report it rather than run two steps of one job at once.
+      const busy = !quick && locks.has(job.id);
+      if (!quick && !busy) locks.add(job.id);
+      try {
+        if (busy) throw new Error('This job is still busy with another step. Try again when it finishes.');
+        const result = await APP_COMMANDS[queued.action](job.id, queued);outcome = {ok:true, message:result?.message || 'Done.'};
+      }
       catch (error) {outcome = {ok:false, message:error.message || String(error)};}
-      finally {if (!quick) locks.delete(job.id);}
+      finally {if (!quick && !busy) locks.delete(job.id);}
       await request(jobPath(job.id) + '/command-result', {commandId:queued.id, ...outcome}).catch(() => {});
       // The job's Resume Apply window shows the change too.
       if (!quick) chrome.runtime.sendMessage({event:'fill-progress', id:job.id, message:outcome.message}).catch(() => {});
@@ -998,7 +1099,9 @@ function startWatcher() {
       while ((await chrome.storage.local.get('credentials')).credentials) {
         try {
           const state = await request('/v1/events?after='+encodeURIComponent(cursor));
-          cursor = state.cursor || '';await openNewAssignments(state);runAppCommands(state);cleanUpJobs(state.cleanup || []);
+          // New jobs' windows open in the background: steps queued for jobs already open
+          // start straight away instead of waiting for them.
+          cursor = state.cursor || '';openNewAssignments(state).catch(() => {});runAppCommands(state);cleanUpJobs(state.cleanup || []);
           // Once per start: tell the app what each open job is really doing now, replacing
           // anything left over from before Chrome or the extension restarted.
           if (!refreshed) {

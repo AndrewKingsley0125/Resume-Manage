@@ -50,7 +50,7 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
   // Steps the app can start for a job; its extension runs them and reports back.
   const COMMANDS = ['open','fullAuto','prepare','confirmResume','replaceResume','auto','scan','ask','fill','complete','fail','focus','details'];
   const pendingCommands = job => (job.commands || []).filter(c => !c.done);
-  const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Mark ended', fail:'Mark failed', replaceResume:'Use revised resume'};
+  const COMMAND_NAMES = {focus:'Show in Chrome', details:'Show details in Chrome', open:'Reopen windows', prepare:'Detect JD & write resume', confirmResume:'Confirm resume', auto:'Auto-fill', scan:'Scan questions', ask:'Ask ChatGPT', fill:'Fill form', complete:'Complete', fail:'Mark as failed', replaceResume:'Use revised resume'};
   const STATUS_EVENTS = {'tabs-opened':'Job window opened', 'tabs-ready':'Job page and ChatGPT ready', 'questions-scanned':'Questions scanned', 'answers-reviewed':'Answers approved for filling', 'filled':'Answers filled on the form'};
   function logEvent(job, text, level = 'info') {
     const message = String(text || '').trim();
@@ -332,6 +332,9 @@ function createExtensionBridge({statePath, getProfiles, buildPrompt, exportResum
     return server && server.address();
   }
   async function stop() {if (server) {const current = server;server = null;current.closeAllConnections();await new Promise(resolve => current.close(resolve));}}
-  return {start, stop, dashboard, assign, unlink, rotateCode, command, reset, setCompany};
+  // Each exported job's resume folder and job link, so the Manage process table can show the
+  // link of resumes exported before links were saved in the folder.
+  const exportedLinks = () => state.jobs.filter(job => job.files && job.files.folder && job.url).map(job => ({folder:job.files.folder, url:job.url}));
+  return {start, stop, dashboard, assign, unlink, rotateCode, command, reset, setCompany, exportedLinks};
 }
 module.exports = { createExtensionBridge, PORT };

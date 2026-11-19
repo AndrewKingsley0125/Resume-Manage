@@ -118,3 +118,15 @@ Reload the extension after updating to 0.4.0. The desktop app does not need chan
 ## Compact side-panel steps (0.4.1)
 
 The side panel shows one section at a time: Connect, Job, Resume, Questions, or Finish. Use Back/Next or the section selector to move between them without clearing drafts. Successful actions and collected responses open the relevant section; answer edits remain protected. The JD folds away after sending or when the resume is collected, and response-recovery tools stay collapsed until needed. Connection settings remain accessible from the compact connection button at the top.
+
+## Working behind other windows (0.5.0)
+
+Job windows no longer need to be in front. The extension attaches Chrome's debugger to each job's tabs and turns on focus emulation, so dropdowns, autocomplete fields and ChatGPT's editor behave as if the page were focused while it stays behind your other windows. Closing a job's tabs detaches it. Chrome shows a "started debugging this browser" bar while it is attached; clicking Cancel there turns focus emulation off until Chrome restarts, and windows are then brought to the front as before.
+
+Chrome still slows pages in covered or minimized windows, which delays collecting ChatGPT replies. Start Chrome with these flags (all Chrome windows must be closed first, or they are ignored):
+
+```
+chrome.exe --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling --silent-debugger-extension-api
+```
+
+The last flag also hides the debugging bar. Reload the extension after updating to 0.5.0 and approve the new debugger permission.

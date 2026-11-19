@@ -724,14 +724,13 @@
     const tplLabel = $('ws-template-label');
     if (tplLabel) tplLabel.textContent = tpl ? tpl.name : 'Modern';
 
-    const dob = (profile.dob || '').trim();
-    const age = calcAge(dob);
-    const dobPart = dob ? (age != null ? `${dob} (${age})` : dob) : '';
-    const meta = [dobPart, profile.location]
+    // The same line as in Auto mode: the shared bar reads the same in both modes.
+    const meta = [profile.title, profile.location]
       .map((v) => (v == null ? '' : String(v).trim()))
       .filter(Boolean)
       .join(' \u00B7 ');
-    $('ws-meta').textContent = meta;
+    const metaEl = $('ws-meta');
+    if (metaEl) metaEl.textContent = meta;
 
     const subtitle = $('subtitle');
     if (subtitle) {
@@ -1301,11 +1300,10 @@
     }
   }
 
-  function resetFromProfile() {
+  async function resetFromProfile() {
     if (!currentProfile) return;
-    const ok = confirm(
-      'Reset resume JSON to a fresh template? Your current JSON will be replaced.'
-    );
+    const question = {title:'Reset the resume JSON?', message:'It is replaced with a fresh template. Your current JSON will be lost.', confirmLabel:'Reset', tone:'danger'};
+    const ok = window.App && window.App.Confirm ? await window.App.Confirm.ask(question) : confirm(question.message);
     if (!ok) return;
     currentResume = seedResume();
     $('resume-json').value = JSON.stringify(currentResume, null, 2);

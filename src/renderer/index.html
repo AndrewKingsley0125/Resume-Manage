@@ -11,15 +11,27 @@
     <link rel="stylesheet" href="tailwind.css" />
   </head>
   <body data-view="list">
-    <header class="topbar flex items-center justify-between gap-4 px-10 pb-2 pt-7">
-      <div class="brand flex items-center gap-3.5">
-        <img class="brand-mark h-11 w-11 shrink-0 drop-shadow-[0_6px_14px_rgba(70,90,255,0.35)]" src="assets/logo.png" alt="" />
-        <div>
+    <!-- One bar for the whole app. Inside a profile it becomes the profile's bar: who it is,
+         Manual or Auto, and its template, process and profile settings, for both modes. -->
+    <header class="topbar flex flex-col gap-3 px-10 pb-2 pt-7 [[data-view=workspace]_&]:sticky [[data-view=workspace]_&]:top-0 [[data-view=workspace]_&]:z-30 [[data-view=workspace]_&]:border-b [[data-view=workspace]_&]:border-line [[data-view=workspace]_&]:bg-elev [[data-view=workspace]_&]:py-3 [[data-view=workspace]_&]:shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+      <!-- Row 1: who (the app, or the profile) and the way back. -->
+      <div class="topbar-row flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+      <div class="brand flex min-w-0 items-center gap-3.5">
+        <img class="brand-mark h-11 w-11 shrink-0 drop-shadow-[0_6px_14px_rgba(70,90,255,0.35)] [[data-view=workspace]_&]:h-8 [[data-view=workspace]_&]:w-8 [[data-view=workspace]_&]:drop-shadow-none" src="assets/logo.png" alt="" />
+        <div class="only-not-workspace">
           <h1 class="m-0 text-xl font-semibold tracking-[0.2px]">Resume Manager</h1>
           <p id="subtitle" class="subtitle mt-0.5 text-[13px] text-muted">Choose a profile to continue</p>
         </div>
+        <div class="only-workspace flex min-w-0 items-center gap-3">
+          <span class="h-7 w-px flex-none bg-line" aria-hidden="true"></span>
+          <div id="ws-avatar" class="avatar !h-9 !w-9 cursor-pointer !rounded-[10px] !text-base transition-[transform,box-shadow] duration-150 hover:scale-105 hover:shadow-[0_0_0_2px_var(--accent)] focus-visible:shadow-[0_0_0_2px_var(--accent)] focus-visible:outline-none">?</div>
+          <div class="min-w-0">
+            <h2 id="ws-name" class="m-0 max-w-[260px] truncate text-[15px] font-semibold leading-snug">Profile</h2>
+            <p id="ws-meta" class="m-0 max-w-[260px] truncate text-xs text-muted"></p>
+          </div>
+        </div>
       </div>
-      <div class="topbar-actions flex items-center gap-2.5">
+      <div class="topbar-actions flex flex-wrap items-center gap-2">
         <button
           id="theme-toggle"
           class="btn btn-ghost btn-icon theme-toggle h-[38px] w-[38px] p-0"
@@ -56,12 +68,31 @@
           <span class="plus mr-0.5 text-lg leading-none">+</span> New profile
         </button>
       </div>
+      </div>
+      <!-- Row 2, inside a profile: Manual or Auto, and the profile's template, process and settings. -->
+      <div class="topbar-row only-workspace flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line pt-3">
+        <div id="ws-mode" class="ws-mode inline-flex rounded-xl border border-line bg-bg p-1" role="radiogroup" aria-label="Application mode">
+          <button id="ws-mode-manual" type="button" role="radio" data-mode="manual" class="ws-mode-option cursor-pointer rounded-lg border-0 bg-transparent px-4 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-checked:bg-elev aria-checked:text-ink aria-checked:shadow-[0_1px_3px_rgba(0,0,0,0.15)]" title="Write and export resumes yourself in the editor">Manual</button>
+          <button id="ws-mode-auto" type="button" role="radio" data-mode="extension" class="ws-mode-option cursor-pointer rounded-lg border-0 bg-transparent px-4 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-checked:bg-elev aria-checked:text-ink aria-checked:shadow-[0_1px_3px_rgba(0,0,0,0.15)]" title="Apply through the Chrome extension, from the job board">Auto</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="ws-template-btn" class="only-workspace btn btn-ghost gap-1.5" type="button" title="Choose another resume template for this profile">
+            <span class="text-[11px] font-semibold uppercase tracking-[0.5px] text-muted">Template</span>
+            <span id="ws-template-label">Classic</span>
+            <span class="text-[10px] text-muted" aria-hidden="true">▾</span>
+          </button>
+          <button id="ws-manage-process" class="only-workspace btn btn-ghost" type="button" title="Saved applications in this profile's save folder: their links, job descriptions and resumes">Manage process</button>
+          <button id="ws-edit-profile" class="only-workspace btn btn-ghost" type="button">Edit profile</button>
+        </div>
+      </div>
     </header>
 
     <main class="content px-10 pb-[60px] pt-6">
       <!-- LIST VIEW -->
       <section id="list-view" class="view w-full">
-        <section id="grid" class="grid mx-auto max-w-[1200px] grid-cols-[repeat(auto-fit,200px)] justify-center gap-5" aria-label="Profiles">
+        <!-- Across every profile: this week, in progress, waiting on you, this month. -->
+        <section id="home-overview" class="mx-auto mb-6 max-w-[1200px] empty:hidden" aria-label="Overview"></section>
+        <section id="grid" class="grid mx-auto max-w-[1200px] grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-4" aria-label="Profiles">
           <!-- Profile tiles render here -->
         </section>
 
@@ -164,32 +195,17 @@
       <!-- WORKSPACE VIEW -->
       <section id="workspace-view" class="view">
         <div id="manual-workspace">
-        <header class="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <div class="flex min-w-0 items-center gap-3.5">
-            <div id="ws-avatar" class="avatar cursor-pointer rounded-[14px] text-[22px] transition-[transform,box-shadow] duration-150 hover:scale-105 hover:shadow-[0_0_0_2px_var(--accent)] focus-visible:shadow-[0_0_0_2px_var(--accent)] focus-visible:outline-none">?</div>
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2.5">
-                <h2 id="ws-name" class="m-0 max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap text-lg font-semibold leading-snug">Profile</h2>
-                <span id="ws-template" class="inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-line bg-hover py-[3px] pl-2 pr-2.5 text-xs leading-[1.3] text-ink">
-                  <span class="text-[10px] font-semibold uppercase tracking-[0.6px] text-muted">Template</span>
-                  <span id="ws-template-label">Modern</span>
-                </span>
-                <span id="ws-company" class="hidden inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-line bg-hover py-[3px] pl-2 pr-2.5 text-xs leading-[1.3] text-ink">
-                  <span class="text-[10px] font-semibold uppercase tracking-[0.6px] text-muted">Target</span>
-                  <span id="ws-company-label" class="max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap"></span>
-                </span>
-              </div>
-              <p id="ws-meta" class="muted small mt-1"></p>
-            </div>
+        <!-- The editor's own actions; who, mode and template are in the bar above. -->
+        <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-2.5">
+            <h2 class="m-0 text-base font-semibold">Resume editor</h2>
+            <span id="ws-company" class="hidden inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-line bg-hover py-[3px] pl-2 pr-2.5 text-xs leading-[1.3] text-ink">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.6px] text-muted">Target</span>
+              <span id="ws-company-label" class="max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap"></span>
+            </span>
           </div>
 
           <div class="flex flex-wrap items-center gap-2.5">
-            <button id="change-template-btn" class="btn btn-ghost" type="button">
-              Change template
-            </button>
-            <button id="manage-process-btn" class="btn btn-ghost" type="button">
-              Manage process
-            </button>
             <button id="reset-resume-btn" class="btn btn-ghost" type="button">
               Reset JSON
             </button>
@@ -368,14 +384,6 @@
         </div>
         </div>
         <section id="extension-workspace" hidden aria-label="Chrome extension workspace">
-          <header class="workspace-header ext-header mb-3 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 id="extension-profile-name" class="my-5 text-2xl font-bold">Profile</h2>
-              <p class="muted small my-3">Chrome extension mode &middot; Review answers before filling. Submit applications yourself.</p>
-            </div>
-            <button id="extension-edit-profile" class="btn btn-ghost" type="button">Edit profile</button>
-          </header>
-
           <!-- Connection: the linked browser on one line, pairing beside it (open until a browser is linked). -->
           <section class="ext-connection mb-3.5 rounded-card border border-line bg-elev px-3.5 py-2.5" aria-label="Browser connection">
             <div class="ext-connection-row flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -397,15 +405,15 @@
             <p id="extension-bridge-notice" class="ext-notice mb-0 mt-2 rounded-[10px] bg-accent-ring px-3 py-2 text-[13px] leading-normal" role="status">Checking local connection service...</p>
           </section>
 
-          <!-- Toolbar: filter by state (with counts), and add or clear links. -->
+          <!-- Toolbar: add or clear links. -->
           <div class="ext-toolbar mb-3 flex flex-wrap items-center justify-between gap-2.5">
-            <div class="ext-tabs flex flex-wrap gap-1.5" role="tablist" aria-label="Show jobs">
-              <button class="ext-tab is-active inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="all">All <span id="ext-count-all" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
-              <button class="ext-tab is-attention inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="attention">Needs you <span id="ext-count-attention" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-attention-ink">0</span></button>
-              <button class="ext-tab is-busy inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="busy">Working <span id="ext-count-busy" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-busy">0</span></button>
-              <button class="ext-tab is-idle inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="idle">Ready <span id="ext-count-idle" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums text-ready-ink">0</span></button>
-              <button class="ext-tab inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="unsent">Not sent <span id="ext-count-unsent" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
-              <button class="ext-tab inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-elev px-3 py-[5px] text-[13px] text-ink hover:border-line-strong [&.is-active]:border-accent [&.is-active]:bg-accent-ring" type="button" data-filter="done">Ended <span id="ext-count-done" class="min-w-[18px] rounded-full bg-bg px-1.5 text-center text-xs font-bold tabular-nums">0</span></button>
+            <div class="flex items-center gap-3">
+              <h3 class="m-0 text-base font-semibold">Applications</h3>
+              <!-- Board (cards in columns) or Table (one row per job): the same jobs. -->
+              <div class="ext-view inline-flex rounded-xl border border-line bg-bg p-1" role="radiogroup" aria-label="Show applications as">
+                <button type="button" role="radio" data-view="board" aria-checked="true" class="ext-view-option cursor-pointer rounded-lg border-0 bg-transparent px-3 py-1 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-checked:bg-elev aria-checked:text-ink aria-checked:shadow-[0_1px_3px_rgba(0,0,0,0.15)]" title="Cards in columns, by state">Board</button>
+                <button type="button" role="radio" data-view="table" aria-checked="false" class="ext-view-option cursor-pointer rounded-lg border-0 bg-transparent px-3 py-1 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-checked:bg-elev aria-checked:text-ink aria-checked:shadow-[0_1px_3px_rgba(0,0,0,0.15)]" title="One row per job, grouped by state">Table</button>
+              </div>
             </div>
             <div class="ext-toolbar-actions flex items-center gap-2">
               <label class="toggle-switch m-0" title="On: Full auto stops after ChatGPT writes the resume so you can check or edit it, and carries on after you confirm. Off: it exports the resume and goes straight on to the application.">
@@ -432,7 +440,7 @@
           <p id="extension-links-status" class="ext-status muted small mb-2 mt-0 empty:hidden" role="status" aria-live="polite"></p>
           <p id="extension-dispatch-status" class="ext-status muted small mb-2 mt-0 empty:hidden [&:not(:empty)]:fixed [&:not(:empty)]:bottom-6 [&:not(:empty)]:right-6 [&:not(:empty)]:z-40 [&:not(:empty)]:m-0 [&:not(:empty)]:max-w-[min(440px,80vw)] [&:not(:empty)]:rounded-[10px] [&:not(:empty)]:border [&:not(:empty)]:border-l-4 [&:not(:empty)]:border-line [&:not(:empty)]:border-l-accent [&:not(:empty)]:bg-elev [&:not(:empty)]:px-3.5 [&:not(:empty)]:py-2.5 [&:not(:empty)]:text-[13px] [&:not(:empty)]:text-ink [&:not(:empty)]:shadow-soft" role="status"></p>
 
-          <!-- The jobs, one row each, grouped by state. -->
+          <!-- The jobs: a board with one column per state (To do, In Progress, Need Manual, Done, Failed). -->
           <div id="extension-job-list" class="ext-groups flex flex-col gap-4" aria-label="Jobs"></div>
           <p id="extension-jobs-empty" class="ext-empty my-2 rounded-card border border-dashed border-line-strong p-[18px] text-center text-muted" hidden>No job links yet. Click + Add links to start.</p>
         </section>
@@ -776,7 +784,13 @@
             Close
           </button>
         </div>
-        <div class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
+        <!-- Applications (the table) or Insights (the chart). -->
+        <div class="process-tabs mb-3 inline-flex w-fit shrink-0 rounded-xl border border-line bg-bg p-1" role="tablist" aria-label="Manage process">
+          <button id="process-tab-table" type="button" role="tab" aria-selected="true" class="process-tab cursor-pointer rounded-lg border-0 bg-transparent px-4 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-selected:bg-elev aria-selected:text-ink aria-selected:shadow-[0_1px_3px_rgba(0,0,0,0.15)]">Applications</button>
+          <button id="process-tab-insights" type="button" role="tab" aria-selected="false" class="process-tab cursor-pointer rounded-lg border-0 bg-transparent px-4 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink aria-selected:bg-elev aria-selected:text-ink aria-selected:shadow-[0_1px_3px_rgba(0,0,0,0.15)]">Insights</button>
+        </div>
+        <div id="process-insights" class="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-1" hidden></div>
+        <div id="process-toolbar" class="mb-3 flex shrink-0 flex-wrap items-center gap-2">
           <input
             id="process-search-company"
             class="field-input w-auto min-w-[160px] flex-[1_1_220px] py-[9px] text-[13px]"
@@ -817,7 +831,7 @@
             Refresh
           </button>
         </div>
-        <div class="relative min-h-0 flex-auto overflow-auto rounded-[10px] border border-line bg-bg">
+        <div id="process-table-wrap" class="relative min-h-0 flex-auto overflow-auto rounded-[10px] border border-line bg-bg">
           <p id="process-empty" class="muted small m-3 empty:hidden"></p>
           <table class="process-table w-full border-collapse text-[13px]">
             <thead>
@@ -827,6 +841,7 @@
                 <th class="sortable group/sort sticky top-0 z-[1] w-[195px] cursor-pointer select-none whitespace-nowrap border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted hover:bg-hover-strong hover:text-ink [&.active]:text-ink" data-sort="date">
                   Date <span class="sort-arrow ml-1 inline-block text-[10px] opacity-[0.45] group-[.active]/sort:text-accent group-[.active]/sort:opacity-100"></span>
                 </th>
+                <th class="sticky top-0 z-[1] w-[220px] border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Job link</th>
                 <th class="sticky top-0 z-[1] w-20 border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">JD</th>
                 <th class="sticky top-0 z-[1] w-20 border-b border-line bg-elev2 px-3 py-2.5 text-left align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Resume</th>
                 <th class="sticky top-0 z-[1] w-[90px] whitespace-nowrap border-b border-line bg-elev2 px-3 py-2.5 text-right align-middle text-[11px] font-bold uppercase tracking-[0.5px] text-muted">Actions</th>
@@ -996,6 +1011,24 @@
     </div>
 
     <!-- Review the resume ChatGPT wrote for a job, before exporting it -->
+    <!-- A job's details: slides in from the right over the Auto apply board. -->
+    <div id="job-details" class="modal job-details hidden !items-stretch !justify-end" role="dialog" aria-modal="true" aria-labelledby="job-details-title">
+      <div class="modal-backdrop" data-job-details-close></div>
+      <aside class="job-details-panel relative z-10 flex h-full w-[min(460px,94vw)] flex-col border-l border-line bg-elev shadow-[-16px_0_40px_rgba(0,0,0,0.22)]">
+        <header class="flex items-start gap-3.5 border-b border-line px-6 pb-4 pt-5">
+          <div id="job-details-icon" class="flex-none"></div>
+          <div class="min-w-0 flex-1">
+            <h2 id="job-details-title" class="m-0 text-lg font-bold leading-snug [overflow-wrap:anywhere]"></h2>
+            <div id="job-details-company" class="mt-0.5 min-w-0 text-sm"></div>
+            <p id="job-details-host" class="m-0 mt-1 truncate text-xs text-muted"></p>
+          </div>
+          <button id="job-details-close" type="button" class="btn btn-ghost btn-sm -mr-2 -mt-1 h-8 w-8 border-0 p-0 text-lg leading-none" data-job-details-close aria-label="Close details" title="Close (Esc)">×</button>
+        </header>
+        <div id="job-details-body" class="min-h-0 flex-1 overflow-y-auto px-6 py-5"></div>
+        <footer id="job-details-actions" class="flex flex-wrap items-center gap-2 border-t border-line px-6 py-4 empty:hidden"></footer>
+      </aside>
+    </div>
+
     <div id="resume-review" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resume-review-title">
       <div class="modal-backdrop" data-review-close></div>
       <div class="modal-card modal-card-wide resume-review-card h-[90vh] w-[min(860px,96vw)]">
@@ -1108,7 +1141,10 @@
     <script src="templates/skill-chips.js"></script>
     <script src="templates/accent-rail.js"></script>
     <script src="templates/compact-pro.js"></script>
+    <script src="confirm-dialog.js"></script>
     <script src="workspace.js"></script>
+    <script src="home-overview.js"></script>
+    <script src="process-chart.js"></script>
     <script src="process.js"></script>
     <script src="extension-workspace.js"></script>
     <script src="discovery.js"></script>

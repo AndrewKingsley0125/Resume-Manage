@@ -252,32 +252,23 @@ app.whenReady().then(async () => {
     const card=await manager.webContents.executeJavaScript('document.querySelector(".extension-card").innerText');
     for (const text of ['Work Chrome','Online','Active now','1 open','1 ended']) assert.ok(card.includes(text),text);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".extension-card").getBoundingClientRect().height<90'),true);
-    // The board: the summary counts jobs by state, and the job sits in the Needs you lane.
     // With the browser online, the connection notice stays out of the way.
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-bridge-notice").hidden'),true);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-attention").textContent'),'1');
-    // All: one list in a fixed order (no state headings, so rows never jump); the row's state shows on it.
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .ext-group-row").length'),0);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list tbody.ext-all .job-card.job-attention .job-card-title").textContent'),'Staff Engineer');
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-attention").textContent'),'1');
-    // Saved jobs are one table with these columns.
-    assert.deepEqual(await manager.webContents.executeJavaScript('[...document.querySelectorAll("#extension-job-list .ext-table thead th")].map(th=>th.textContent)'),['Job site','Company','Title','Process','Status','Actions','']);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .job-card").tagName'),'TR');
+    // A board with one column per state, each with its count; no filter tabs. A job waiting
+    // for you on the job page sits in Waiting on You.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".ext-tab").length'),0);
+    assert.deepEqual(await manager.webContents.executeJavaScript('[...document.querySelectorAll("#extension-job-list .ext-board .ext-column-head h3")].map(h=>h.textContent)'),['To do','In Progress','Waiting on You','Done','Failed']);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list [data-column=\\"waiting\\"] .job-card.job-attention .job-card-title").textContent'),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list [data-column=\\"waiting\\"] .ext-column-count").textContent'),'1');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .job-card").tagName'),'ARTICLE');
     // A job left 'working' from before, whose browser is now offline, shows as paused, not as working.
     const savedJob={...bridgeState.jobs[0]};
     bridgeState.connections[0]={...bridgeState.connections[0],connected:false};
     bridgeState.jobs[0]={...savedJob,progress:{text:'Auto-filling page 2',level:'busy',key:'auto-filling',at:Date.now()}};
-    await wait(manager,`/^Paused: Chrome is offline/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"] .job-card-state')?.textContent||'')`);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ext-count-busy").textContent'),'0');
+    await wait(manager,`/^Paused: Chrome is offline/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"]')?.dataset.state||'')`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list [data-column=\\"progress\\"] .ext-column-count").textContent'),'0');
     bridgeState.connections[0]={...bridgeState.connections[0],connected:true};bridgeState.jobs[0]=savedJob;
-    await wait(manager,`/^Needs you: solve the CAPTCHA/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"] .job-card-state')?.textContent||'')`);
-    // Filter tabs show one group at a time; All brings everything back.
-    await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="unsent"]').click()`);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card").length'),0);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list .ext-empty").textContent'),'No jobs waiting to be sent.');
-    assert.equal(await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="unsent"]').classList.contains("is-active")`),true);
-    await manager.webContents.executeJavaScript(`document.querySelector('.ext-tab[data-filter="all"]').click()`);
-    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#extension-job-list .job-card").length'),1);
+    await wait(manager,`/^Needs you: solve the CAPTCHA/.test(document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"]')?.dataset.state||'')`);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-slots-empty").hidden && !document.querySelector("#extension-pairing").open && document.querySelector("#extension-target-field").hidden'),true);
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-connected-count").textContent'),'1');
     // With one browser (or none), the Send jobs to picker is not shown at all.
@@ -290,42 +281,122 @@ app.whenReady().then(async () => {
     await wait(manager,`!!${jobCard} && ${jobCard}.classList.contains("job-attention")`);
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-title").textContent`),'Staff Engineer');
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-company").textContent`),'Acme');
-    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-state").textContent`),'Needs you: solve the CAPTCHA on the job page · just now');
+    // The card shows no description: what it is doing is in its details panel.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-state")`),null);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.dataset.state`),'Needs you: solve the CAPTCHA on the job page');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-pill").textContent`),'Needs you');
     const stepButtons=`[...${jobCard}.querySelectorAll(".job-card-actions button")].map(b=>b.dataset.action).join()`;
-    // Where the job stands, and what happened: a stage bar and its history (newest first),
-    // which stays open across the screen's refresh once opened.
-    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-stage-label").textContent`),'Stage 2 of 6: Job description');
+    // Where the job stands: a slim stage bar and count on the card.
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelectorAll(".job-stage.is-done").length`),1);
-    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-history summary").click()`);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-stage-count").textContent`),'1/6');
+    // Clicking the card opens its details panel: the headline, the full message, the stages and
+    // the history (newest first). It stays open, and up to date, across the screen's refresh.
+    // An open job's details are in its menu (a click on the card shows it in Chrome).
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click();${jobCard}.querySelector('[data-action="view-details"]').click()`);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details").classList.contains("hidden")'),false);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details-title").textContent'),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details .job-details-headline").textContent'),'Waiting for you on the job page');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details .job-card-state").textContent'),'Needs you: solve the CAPTCHA on the job page');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll("#job-details .job-step.is-done").length'),1);
+    assert.match(await manager.webContents.executeJavaScript('document.querySelector("#job-details .job-step.is-current").textContent'),/^Job description/);
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-active")`),true);
     await new Promise(resolve=>setTimeout(resolve,3500));
-    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-history").open`),true);
-    assert.deepEqual(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-history li span")].map(n=>n.textContent)`),['Needs you: solve the CAPTCHA on the job page','Sent to Work Chrome']);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details").classList.contains("hidden")'),false);
+    assert.deepEqual(await manager.webContents.executeJavaScript('[...document.querySelectorAll("#job-details .job-history li span")].map(n=>n.textContent)'),['Needs you: solve the CAPTCHA on the job page','Sent to Work Chrome']);
+    // Escape closes it.
+    await manager.webContents.executeJavaScript('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details").classList.contains("hidden")'),true);
     // Only the steps that fit where the job is: none while it waits for you on the job page,
     // with Reopen and End always in the corner.
     assert.equal(await manager.webContents.executeJavaScript(stepButtons),'');
     // Reopen, details and end sit in the card's menu, closed until asked for.
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click()`);
-    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'Show details in Chrome,Reopen windows,Start over,Mark ended,Mark failed');
+    assert.equal(await manager.webContents.executeJavaScript(`[...${jobCard}.querySelectorAll(".job-menu .job-menu-item")].map(b=>b.textContent).join()`),'View details,Show details in Chrome,Reopen windows,Start over,Complete,Failed');
     // Clicking elsewhere closes it.
     await manager.webContents.executeJavaScript('document.querySelector("#extension-job-count").click()');
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu").hidden`),true);
+    // Every column has the same width, empty or not, and there are no resize handles.
+    const widths=await manager.webContents.executeJavaScript('[...document.querySelector(".ext-board").children].map(c=>Math.round(c.getBoundingClientRect().width))');
+    assert.ok(widths.length===5 && widths.every(w=>Math.abs(w-widths[0])<=1), JSON.stringify(widths));
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".ext-column-resize").length'),0);
+    // Table view: the same jobs, one row each, grouped by state; a row opens its details; the
+    // choice is kept; Board brings the cards back.
+    await manager.webContents.executeJavaScript('document.querySelector(".ext-view-option[data-view=\\"table\\"]").click()');
+    assert.equal(await manager.webContents.executeJavaScript('!!document.querySelector("#extension-job-list .ext-jobs-table") && !document.querySelector("#extension-job-list .ext-board")'),true);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#extension-job-list tbody[data-column=\\"waiting\\"] .job-row[data-url=\\"https://jobs.example.test/job\\"] .job-card-title").textContent'),'Staff Engineer');
+    assert.equal(await manager.webContents.executeJavaScript('localStorage.getItem("boardView")+","+document.querySelector(".ext-view-option[data-view=\\"table\\"]").getAttribute("aria-checked")'),'table,true');
+    await manager.webContents.executeJavaScript('(()=>{const row=document.querySelector("#extension-job-list .job-row[data-url=\\"https://jobs.example.test/job\\"]");row.querySelector(".job-menu-button").click();row.querySelector("[data-action=\\"view-details\\"]").click();})()');
+    assert.equal(await manager.webContents.executeJavaScript('!document.querySelector("#job-details").classList.contains("hidden") && document.querySelector("#job-details-title").textContent'),'Staff Engineer');
+    await manager.webContents.executeJavaScript('document.querySelector("#job-details-close").click()');
+    await manager.webContents.executeJavaScript('document.querySelector(".ext-view-option[data-view=\\"board\\"]").click()');
+    assert.equal(await manager.webContents.executeJavaScript('!!document.querySelector("#extension-job-list .ext-board")'),true);
+    // Dragging a card: refused moves spring back with the reason; allowed ones ask first, and
+    // run the same step as the button when confirmed.
+    const dragTo = column => manager.webContents.executeJavaScript(`(async()=>{
+      const card=document.querySelector('#extension-job-list .job-card[data-url="https://jobs.example.test/job"]');
+      const from=card.getBoundingClientRect(),x=from.left+40,y=from.top+20;
+      const target=document.querySelector('#extension-job-list [data-column="${column}"] .ext-column-cards').getBoundingClientRect();
+      const tx=target.left+target.width/2,ty=target.top+30;
+      card.dispatchEvent(new PointerEvent('pointerdown',{clientX:x,clientY:y,button:0,bubbles:true}));
+      window.dispatchEvent(new PointerEvent('pointermove',{clientX:x+20,clientY:y+5,bubbles:true}));
+      window.dispatchEvent(new PointerEvent('pointermove',{clientX:tx,clientY:ty,bubbles:true}));
+      const hint=document.querySelector('.job-drag-hint'),said=hint?hint.textContent+'|'+hint.dataset.tone:'';
+      const drop=document.querySelector('[data-column="${column}"]').dataset.drop;
+      window.dispatchEvent(new PointerEvent('pointerup',{clientX:tx,clientY:ty,bubbles:true}));
+      await new Promise(r=>setTimeout(r,50));
+      return {said,drop};
+    })()`);
+    const refused=await dragTo('progress');
+    assert.equal(refused.drop,'no');
+    assert.match(refused.said,/^Do what it is waiting for.*\|no$/);
+    assert.equal(commands.length,0);
+    const cancelled=await dragTo('done');
+    assert.equal(cancelled.drop,'ok');assert.equal(cancelled.said,'Drop to Complete|ok');
+    await wait(manager,'!!document.querySelector(".app-confirm")');
+    await manager.webContents.executeJavaScript('document.querySelector(".app-confirm-cancel").click()');
+    await new Promise(resolve=>setTimeout(resolve,200));
+    assert.equal(commands.length,0,'cancelling the question sends nothing');
+    await dragTo('failed');
+    await wait(manager,'!!document.querySelector(".app-confirm")');
+    await manager.webContents.executeJavaScript('document.querySelector(".app-confirm-ok").click()');
+    for(let i=0;i<30 && !commands.length;i++)await new Promise(resolve=>setTimeout(resolve,100));
+    assert.deepEqual(commands,[{profileId:'extension',jobId:'j1',action:'fail'}]);
+    commands.length=0;
+    await new Promise(resolve=>setTimeout(resolve,700));
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".job-drag-ghost, .job-card.is-drag-source").length'),0);
+    // To do has the priority button at its top right; one click switches between easiest site
+    // first and the order added, and the choice is kept. No other column has one.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelectorAll(".ext-sort").length'),1);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("[data-column=\\"todo\\"] .ext-column-head .ext-sort").dataset.sort'),'site');
+    await manager.webContents.executeJavaScript('document.querySelector(".ext-sort").click()');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-sort").dataset.sort+","+localStorage.getItem("boardSort")'),'added,added');
+    await manager.webContents.executeJavaScript('document.querySelector(".ext-sort").click()');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector(".ext-sort").dataset.sort'),'site');
     const tinyPng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
     bridgeState.jobs[0]={...bridgeState.jobs[0],page:{title:'Acme - Staff Engineer',icon:tinyPng},progress:{text:'',level:'idle',key:'',at:Date.now()}};
     await wait(manager,`${stepButtons}==="fullAuto,prepare"`);
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-avatar img").src.startsWith("data:image/png")`),true);
     bridgeState.jobs[0]={...bridgeState.jobs[0],status:'resume-exported'};
     await wait(manager,`${stepButtons}==="auto,scan"`);
+    // Out of Waiting on You, it is In Progress; reaching a further stage makes it glow once.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.closest("[data-column]").dataset.column`),'progress');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-arrived")`),true);
+    // On the next refresh it stays put, without glowing again.
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-arrived")`),false);
     await manager.webContents.executeJavaScript(`${jobCard}.querySelector('[data-action="auto"]').click()`);
     await wait(manager,'/Auto-fill sent to/.test(document.querySelector("#extension-dispatch-status").textContent)');
     assert.deepEqual(commands,[{profileId:'extension',jobId:'j1',action:'auto'}]);
     // Selecting a row must not change its size.
     const sizeBefore=await manager.webContents.executeJavaScript(`(()=>{const r=${jobCard}.getBoundingClientRect();return [Math.round(r.top+scrollY),Math.round(r.width),Math.round(r.height)].join()})()`);
-    // Clicking the card itself (not a button) shows that job's window in Chrome.
-    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-state").click()`);
+    // A click on the card brings that job's window to the front in Chrome.
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-card-title").click()`);
     await wait(manager,'/^Showing .* in Chrome\.$/.test(document.querySelector("#extension-dispatch-status").textContent)');
     assert.deepEqual(commands.map(c=>c.action),['auto','focus']);
     assert.equal(await manager.webContents.executeJavaScript(`(()=>{const r=${jobCard}.getBoundingClientRect();return [Math.round(r.top+scrollY),Math.round(r.width),Math.round(r.height)].join()})()`),sizeBefore,'the selected row keeps its size');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details").classList.contains("hidden")'),true,'a card click does not open the panel');
+    await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-menu-button").click();${jobCard}.querySelector('[data-action="view-details"]').click()`);
     // The clicked card is highlighted, and stays so after the screen refreshes.
     assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.classList.contains("is-selected") && ${jobCard}.querySelector(".job-card-selected").textContent`),'In front');
     await new Promise(resolve=>setTimeout(resolve,3500));
@@ -341,7 +412,13 @@ app.whenReady().then(async () => {
     assert.equal(commands.at(-1).action,'fill');
     bridgeState.jobs[0]={...bridgeState.jobs[0],progress:{text:"Needs you: review the resume ChatGPT wrote",level:'attention',key:'confirm-resume',at:Date.now()}};
     await wait(manager,`${stepButtons}==="review"`);
-    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-last-command.is-error").textContent`),'Detect JD & write resume: Job description is empty.');
+    // A resume waiting for your confirmation is Waiting on You too, marked Review.
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.closest("[data-column]").dataset.column`),'waiting');
+    assert.equal(await manager.webContents.executeJavaScript(`${jobCard}.querySelector(".job-pill").textContent`),'Review');
+    // The last step's result is in the details panel, kept up to date while it is open.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details .job-last-command.is-error").textContent'),'Detect JD & write resume: Job description is empty.');
+    await manager.webContents.executeJavaScript('document.querySelector("#job-details-close").click()');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#job-details").classList.contains("hidden")'),true);
     // Review resume shows what ChatGPT wrote in the app; Confirm & export sends the confirm step.
     bridgeState.jobs[0]={...bridgeState.jobs[0],pendingResume:JSON.stringify({company:'Acme',title:'Staff Platform Engineer',summary:'Built **reliable** systems at scale.',skills:[{Languages:['Go','Python']}],experience:[],education:[]})};
     await new Promise(resolve=>setTimeout(resolve,3500));
@@ -386,7 +463,10 @@ app.whenReady().then(async () => {
     assert.equal(data[1].fullAutoReviewResume,true);
     console.log('PASS: the Full auto resume review switch is saved on the profile.');
     bridgeState.connections=[];bridgeState.jobs=[];
-    await manager.webContents.executeJavaScript('document.querySelector("#extension-edit-profile").click()');
+    // One bar for both modes: the profile, Manual or Auto, and its template and settings.
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ws-mode-auto").getAttribute("aria-checked")+","+document.querySelector("#ws-mode-manual").getAttribute("aria-checked")'),'true,false');
+    assert.equal(await manager.webContents.executeJavaScript('getComputedStyle(document.querySelector("#ws-template-btn")).display!=="none" && getComputedStyle(document.querySelector("#subtitle").parentElement).display'),'none');
+    await manager.webContents.executeJavaScript('document.querySelector("#ws-edit-profile").click()');
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#profile-extension-mode").checked'),true);
     // The employer-name switch starts off for a profile that never set it, and saves when turned on.
     assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#use-json-employer-names").checked'),false);
@@ -395,6 +475,21 @@ app.whenReady().then(async () => {
     await wait(manager,'!document.querySelector("#manual-workspace").hidden && document.querySelector("#extension-workspace").hidden');
     assert.equal(data.find(p=>p.id==='extension').applicationMode,'manual');
     assert.equal(data.find(p=>p.id==='extension').useJsonEmployerNames,true);
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#ws-mode-manual").getAttribute("aria-checked")'),'true');
+    // The bar's Auto switch goes back to the board and saves the mode on the profile.
+    await manager.webContents.executeJavaScript('document.querySelector("#ws-mode-auto").click()');
+    await wait(manager,'document.querySelector("#manual-workspace").hidden && !document.querySelector("#extension-workspace").hidden');
+    assert.equal(data.find(p=>p.id==='extension').applicationMode,'extension');
+    // Template, from the bar, in Auto mode too: the picker, and Back returns to the profile.
+    await manager.webContents.executeJavaScript('document.querySelector("#ws-template-btn").click()');
+    await wait(manager,'document.body.dataset.view==="picker"');
+    assert.equal(await manager.webContents.executeJavaScript('document.querySelector("#picker-back-btn").textContent'),'← Back');
+    await manager.webContents.executeJavaScript('document.querySelector("#picker-back-btn").click()');
+    await wait(manager,'document.body.dataset.view==="workspace" && !document.querySelector("#extension-workspace").hidden');
+    // And Manual again, for the rest of this check.
+    await manager.webContents.executeJavaScript('document.querySelector("#ws-mode-manual").click()');
+    await wait(manager,'!document.querySelector("#manual-workspace").hidden && document.querySelector("#extension-workspace").hidden');
+    assert.equal(data.find(p=>p.id==='extension').applicationMode,'manual');
     const promptFocus = await manager.webContents.executeJavaScript('document.querySelector("#application-answer-prompt").focus();getComputedStyle(document.querySelector("#application-answer-prompt")).borderColor');
     assert.ok(promptFocus);
     assert.deepEqual(errors,[]);

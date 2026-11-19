@@ -347,19 +347,26 @@
     for (const p of profiles) {
       grid.appendChild(buildTile(p));
     }
+    refreshOverview();
+  }
+  // The summary strip and each card's numbers, read from the jobs and save folders.
+  function refreshOverview() {
+    if (!window.App.HomeOverview || document.body.dataset.view !== 'list') return;
+    window.App.HomeOverview.refresh(profiles, { onOpen: selectProfile });
   }
 
   function buildTile(profile) {
     const label = displayName(profile);
 
     const tile = document.createElement('div');
-    tile.className = 'tile group relative flex cursor-pointer flex-col items-center gap-3.5 rounded-panel border border-line bg-elev px-[18px] pb-[18px] pt-[22px] transition duration-[180ms] hover:-translate-y-0.5 hover:border-line-strong hover:bg-elev2 hover:shadow-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
+    tile.className = 'tile group relative flex cursor-pointer flex-col gap-3.5 rounded-2xl border border-line bg-elev p-4 transition duration-[180ms] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
     tile.tabIndex = 0;
     tile.setAttribute('role', 'button');
     tile.setAttribute('aria-label', `Open profile ${label}`);
 
     const actions = document.createElement('div');
-    actions.className = 'tile-actions absolute right-2.5 top-2.5 flex gap-1.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100';
+    // Shown when you point at the card, on its own background over the name's end.
+    actions.className = 'tile-actions absolute right-3 top-3 z-[1] flex gap-1 rounded-lg bg-elev p-0.5 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.08)] transition-opacity group-focus-within:opacity-100 group-hover:opacity-100';
 
     const editBtn = document.createElement('button');
     editBtn.className = 'icon-btn h-[30px] w-[30px] bg-hover text-ink hover:bg-hover-strong hover:text-ink';
@@ -381,19 +388,41 @@
       openConfirmDelete(profile);
     });
 
-    actions.append(editBtn, delBtn);
+    // Its saved applications, without opening the profile.
+    const processBtn = document.createElement('button');
+    processBtn.className = 'icon-btn h-[30px] w-[30px] bg-hover text-ink hover:bg-hover-strong hover:text-ink';
+    processBtn.title = 'Manage process';
+    processBtn.setAttribute('aria-label', `Manage process for ${label}`);
+    processBtn.textContent = '▤';
+    processBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.App.Process) window.App.Process.open(profile);
+    });
+
+    actions.append(processBtn, editBtn, delBtn);
 
     const avatar = document.createElement('div');
-    avatar.className = 'avatar h-24 w-24 rounded-[22px] text-[42px] tracking-[0.5px] shadow-[0_8px_20px_rgba(0,0,0,0.25)] [text-shadow:0_2px_6px_rgba(0,0,0,0.25)]';
+    avatar.className = 'avatar h-12 w-12 flex-none rounded-[14px] text-[22px] tracking-[0.5px] shadow-[0_4px_12px_rgba(0,0,0,0.18)] [text-shadow:0_1px_3px_rgba(0,0,0,0.25)]';
     avatar.style.backgroundColor = profile.color;
     avatar.textContent = initialFor(profile);
 
     const name = document.createElement('div');
-    name.className = 'tile-name max-w-full truncate text-center text-[15px] font-medium';
+    name.className = 'tile-name max-w-full truncate text-[15px] font-semibold text-ink';
     name.textContent = label;
     name.title = label;
+    // Who: the avatar, the name, and the role it applies for.
+    const who = document.createElement('div');
+    who.className = 'flex min-w-0 items-center gap-3';
+    const names = document.createElement('div');
+    names.className = 'flex min-w-0 flex-col gap-0.5';
+    const role = document.createElement('div');
+    role.className = 'tile-role truncate text-xs text-muted';
+    role.textContent = (profile.title || '').trim() || 'No target role set';
+    names.append(name, role);
+    who.append(avatar, names);
 
-    tile.append(actions, avatar, name);
+    tile.append(actions, who);
+    if (window.App.HomeOverview) tile.append(window.App.HomeOverview.tileBody(profile));
 
     tile.addEventListener('click', () => selectProfile(profile));
     tile.addEventListener('keydown', (e) => {
@@ -421,6 +450,8 @@
 
   function setView(view, profile) {
     document.body.dataset.view = view;
+    if (view === 'list') setTimeout(refreshOverview, 0);
+    if (view !== 'picker') pickerFromBar = false;
     const subtitle = document.getElementById('subtitle');
     if (subtitle) {
       if (view === 'list') subtitle.textContent = 'Choose a profile to continue';
@@ -432,6 +463,7 @@
       if (view === 'discovery') window.App.Discovery.open();
       else window.App.Discovery.close();
     }
+    if (view === 'workspace' && profile) fillWorkspaceBar(profile);
     const extensionMode = view === 'workspace' && profile && profile.applicationMode === 'extension';
     document.getElementById('manual-workspace').hidden = !!extensionMode;
     document.getElementById('extension-workspace').hidden = !extensionMode;
@@ -464,6 +496,61 @@
     }
   }
 
+  // ---------- The profile's bar (both modes) ----------
+  // Who the profile is, Manual or Auto, and its template, process and settings, in one bar at
+  // the top, the same in both modes.
+  let barProfileId = null;
+  // Set when the template picker is opened from the bar, so it returns to the profile.
+  let pickerFromBar = false;
+  const barProfile = () => profiles.find((p) => p.id === barProfileId) || null;
+  function fillWorkspaceBar(profile) {
+    barProfileId = profile.id;
+    const avatar = document.getElementById('ws-avatar');
+    if (avatar) {
+      avatar.style.backgroundColor = profile.color || '#6c8cff';
+      avatar.textContent = initialFor(profile);
+    }
+    const name = document.getElementById('ws-name');
+    if (name) name.textContent = displayName(profile);
+    const meta = document.getElementById('ws-meta');
+    if (meta) meta.textContent = [profile.title, profile.location].map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+    const tpl = window.App.Templates && window.App.Templates.get(profile.templateId || 'classic');
+    const label = document.getElementById('ws-template-label');
+    if (label) label.textContent = tpl ? tpl.name : 'Classic';
+    const auto = profile.applicationMode === 'extension';
+    for (const [id, on] of [['ws-mode-manual', !auto], ['ws-mode-auto', auto]]) {
+      const option = document.getElementById(id);
+      if (option) { option.setAttribute('aria-checked', String(on)); option.tabIndex = on ? 0 : -1; }
+    }
+  }
+  // Manual or Auto: saved on the profile, and the screen below switches at once.
+  async function switchMode(mode) {
+    const target = barProfile();
+    if (!target || window.App.ProfileWorkflow.normalizeMode(mode) === target.applicationMode) return;
+    target.applicationMode = window.App.ProfileWorkflow.normalizeMode(mode);
+    await persist();
+    render();
+    if (document.body.dataset.view === 'workspace') setView('workspace', target);
+  }
+  function bindWorkspaceBar() {
+    document.querySelectorAll('.ws-mode-option').forEach((option) => {
+      option.addEventListener('click', () => switchMode(option.dataset.mode));
+      // Arrow keys move between the two, as in any radio group.
+      option.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const other = document.querySelector(`.ws-mode-option:not([data-mode="${option.dataset.mode}"])`);
+        if (other) { other.focus(); switchMode(other.dataset.mode); }
+      });
+    });
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    on('ws-template-btn', () => { const p = barProfile(); if (p) pickerFromBar = true; if (p) window.location.hash = `#/profile/${encodeURIComponent(p.id)}/template`; });
+    on('ws-manage-process', () => { const p = barProfile(); if (p && window.App.Process) window.App.Process.open(p); });
+    on('ws-edit-profile', () => { const p = barProfile(); if (p) openEditor('edit', p); });
+    // In Auto mode the avatar opens the profile; in Manual mode the editor shows its details.
+    on('ws-avatar', () => { const p = barProfile(); if (p && p.applicationMode === 'extension') openEditor('edit', p); });
+  }
+
   function handleRoute() {
     const hash = window.location.hash || '#/';
     if (hash === '#/discovery') { setView('discovery'); return; }
@@ -472,10 +559,7 @@
       const id = decodeURIComponent(mt[1]);
       const profile = profiles.find((p) => p.id === id);
       if (!profile) { window.location.hash = '#/'; return; }
-      if (profile.applicationMode === 'extension') {
-        window.location.hash = `#/profile/${encodeURIComponent(profile.id)}`;
-        return;
-      }
+      // Both modes use the template: Auto apply exports its resumes with it too.
       setView('picker', profile);
       return;
     }
@@ -501,6 +585,12 @@
     const grid = document.getElementById('template-grid');
     const nameEl = document.getElementById('picker-profile-name');
     if (nameEl) nameEl.textContent = displayName(profile);
+    // Changing it from the profile's bar goes back there; a first choice continues on.
+    const changing = pickerFromBar || profile.templateChosen === true;
+    const back = document.getElementById('picker-back-btn');
+    if (back) back.textContent = changing ? '← Back' : '← Profiles';
+    const next = document.getElementById('picker-next');
+    if (next) next.textContent = changing ? 'Use this template' : 'Next →';
     if (!grid) return;
     grid.innerHTML = '';
     const templates = (window.App && window.App.Templates && window.App.Templates.list()) || [];
@@ -1001,10 +1091,14 @@
 
   const pickerBackBtn = document.getElementById('picker-back-btn');
   if (pickerBackBtn) {
+    // Opened from a profile's bar: back to that profile. Choosing a first template: to Profiles.
     pickerBackBtn.addEventListener('click', () => {
-      window.location.hash = '#/';
+      window.location.hash = pickerProfile && (pickerFromBar || pickerProfile.templateChosen)
+        ? `#/profile/${encodeURIComponent(pickerProfile.id)}`
+        : '#/';
     });
   }
+  bindWorkspaceBar();
   const pickerNextBtn = document.getElementById('picker-next');
   if (pickerNextBtn) {
     pickerNextBtn.addEventListener('click', confirmPickerSelection);

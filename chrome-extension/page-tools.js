@@ -1123,11 +1123,12 @@
     return new Promise(resolve => {
       let quiet, observer;
       const finish = () => {clearTimeout(quiet);clearTimeout(limit);observer.disconnect();resolve(true);};
-      const schedule = () => {clearTimeout(quiet);quiet = setTimeout(finish,700);};
+      const schedule = () => {clearTimeout(quiet);quiet = setTimeout(finish,400);};
       observer = new MutationObserver(schedule);
       // Text-only changes (clocks, counters, animations) never settle and do not change the form.
       observer.observe(document.body,{childList:true,subtree:true});
-      const limit = setTimeout(() => {clearTimeout(quiet);observer.disconnect();resolve(false);},8000);
+      // A page that keeps changing (ads, carousels) is used after 4 seconds rather than 8.
+      const limit = setTimeout(() => {clearTimeout(quiet);observer.disconnect();resolve(false);},4000);
       schedule();
     });
   }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Resume Manager Apply",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Manually prepare, review, and fill job applications with Resume Manager.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -10,7 +10,8 @@
     "scripting",
     "alarms",
     "activeTab",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
   "host_permissions": [
     "http://127.0.0.1:17373/*",

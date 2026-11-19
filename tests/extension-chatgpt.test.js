@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname,'../chrome-extension/chatgpt-
 
 function editor({draft='',sendButton=false,ignoreClick=false,renderText=value=>value,storedText=value=>value,withResponse=false}={}) {
   let time=0, pasted='', commands=0, clicks=0, enters=0, user=null,interval;
-  const notifications=[];
+  const notifications=[],checksRequested=[];
   const assistant={textContent:'Old answer Copy',innerText:'Old answer Copy',contains:()=>false,querySelector:()=>null,querySelectorAll:()=>[],getRootNode:()=>({nodeType:9}),closest(selector){return selector.startsWith('[data-message-author-role="user"]')?null:this;}};
   const copy={textContent:'Copy',closest:selector=>selector.startsWith('[data-message-author-role="user"]')?null:assistant};
   function submit(){user={textContent:composer.textContent || composer.innerText,getAttribute:()=>null,closest:()=>null,compareDocumentPosition:()=>4};composer.innerText='';composer.textContent='';}
@@ -21,7 +21,8 @@ function editor({draft='',sendButton=false,ignoreClick=false,renderText=value=>v
     Date:{now:()=>time},setTimeout(fn,ms){time+=ms;fn();},
     setInterval(fn){interval=fn;},clearInterval(){},clearTimeout(){},
     MutationObserver:class {observe(){} disconnect(){}},Node:{DOCUMENT_POSITION_FOLLOWING:4},
-    chrome:{runtime:{async sendMessage(message){notifications.push(message);return {collected:true};}}},
+    // Requests for a later check (the worker keeps background tabs checking) are not reports.
+    chrome:{runtime:{async sendMessage(message){if(message.event==='chat-check-later')checksRequested.push(message);else notifications.push(message);return {collected:true};}}},
     Event:class {constructor(type){this.type=type;}},
     KeyboardEvent:class {constructor(type,options){this.type=type;Object.assign(this,options);}},
     ClipboardEvent:class {constructor(type,options){this.type=type;Object.assign(this,options);}},
@@ -39,7 +40,7 @@ function editor({draft='',sendButton=false,ignoreClick=false,renderText=value=>v
       execCommand(command,ui,body){commands++;const value=command==='delete'?'':body;composer.innerText=renderText(value);composer.textContent=storedText(value);return true;}}
   });
   vm.runInContext(source,context);
-  return {send:context.ResumeApplyChat.send,watch:context.ResumeApplyChat.watchResponse,state:context.ResumeApplyChat.responseState,composer,assistant,notifications,
+  return {send:context.ResumeApplyChat.send,watch:context.ResumeApplyChat.watchResponse,state:context.ResumeApplyChat.responseState,composer,assistant,notifications,checksRequested,
     async tick(){time+=2000;await interval();},
     get pasted(){return pasted;},get commands(){return commands;},get clicks(){return clicks;},get enters(){return enters;},get user(){return user;}};
 }
@@ -140,6 +141,8 @@ test('completion monitoring leaves an unchanged old response uncollected',async(
   chat.watch({id:'job',kind:'answers',receipt});
   await chat.tick();
   assert.equal(chat.notifications.length,0);
+  // It keeps asking the worker to check again, so a background tab is not left waiting.
+  assert.ok(chat.checksRequested.length>=1);
 });
 
 test('polling can distinguish an unsent request from a submitted request',async()=>{

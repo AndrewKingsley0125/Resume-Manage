@@ -34,8 +34,47 @@
     if (!profile) return;
     bind();
     currentProfile = profile;
+    showTab('table');
     showModal($('process-modal'));
     await refresh();
+  }
+
+  // ---------- Applications | Insights ----------
+
+  let tab = 'table';
+  function showTab(name) {
+    tab = name;
+    const insights = name === 'insights';
+    $('process-tab-table')?.setAttribute('aria-selected', String(!insights));
+    $('process-tab-insights')?.setAttribute('aria-selected', String(insights));
+    for (const id of ['process-toolbar', 'process-table-wrap']) { const el = $(id); if (el) el.hidden = insights; }
+    const panel = $('process-insights');
+    if (panel) panel.hidden = !insights;
+    if (insights) renderInsights();
+  }
+  // Every profile's applications, each profile with its own colour slot (by its place in the
+  // profile list, so a profile keeps its colour whatever else is shown). A folder shared by
+  // two profiles is counted once, for the first.
+  async function renderInsights() {
+    const panel = $('process-insights');
+    if (!panel || !currentProfile || !window.App.ProcessChart) return;
+    const profiles = (window.App.Profiles && window.App.Profiles.list()) || [currentProfile];
+    const seen = new Set();
+    const series = [];
+    for (const [slot, profile] of profiles.entries()) {
+      const folder = (profile.saveFolder || '').trim();
+      let rows = [];
+      if (profile.id === currentProfile.id) rows = processes;
+      else if (folder) {
+        try { rows = (await window.api.listProcesses(profile.id, folder)) || []; } catch (_) { rows = []; }
+      }
+      rows = rows.filter((row) => row.folderPath && !seen.has(row.folderPath));
+      rows.forEach((row) => seen.add(row.folderPath));
+      const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || 'Unnamed profile';
+      series.push({ id: profile.id, name, slot, rows });
+    }
+    if (tab !== 'insights') return;
+    window.App.ProcessChart.render(panel, { series, profileId: currentProfile.id });
   }
 
   function close() {
@@ -78,6 +117,7 @@
       emptyEl.textContent = `Failed to load processes: ${err.message || err}`;
     }
     render();
+    if (tab === 'insights') renderInsights();
   }
 
   // ---------- Rendering ----------
@@ -121,6 +161,7 @@
     'col-no': CELL + ' w-12 text-muted',
     'col-company': CELL + ' max-w-[280px]',
     'col-date': CELL + ' w-[195px] whitespace-nowrap tabular-nums',
+    'col-link': CELL + ' w-[220px] max-w-[220px]',
     'col-jd': CELL + ' w-20',
     'col-resume': CELL + ' w-20',
     'col-actions': 'border-b border-line px-3 py-2.5 text-right align-middle w-[90px] whitespace-nowrap',
@@ -137,6 +178,7 @@
     tr.appendChild(td(String(idx), 'col-no'));
     tr.appendChild(makeCompanyCell(p));
     tr.appendChild(td(formatDate(p.date), 'col-date'));
+    tr.appendChild(makeLinkCell(p));
 
     // JD cell
     const jdTd = document.createElement('td');
@@ -181,6 +223,82 @@
     btn.setAttribute('aria-label', `Open folder for ${p.companyName}`);
     btn.addEventListener('click', () => openCompanyFolder(p));
     cell.appendChild(btn);
+    return cell;
+  }
+
+  // The job posting's link: its site, which opens it in the browser, and a pencil to change it;
+  // "+ Add link" when it has none. Saved as job-link.txt in the application's folder.
+  const hostOf = (url) => {try {return new URL(url).hostname.replace(/^www\./, '');} catch (_) {return url;}};
+  function makeLinkCell(p) {
+    const cell = document.createElement('td');
+    cell.className = CELL_CLASSES['col-link'] + ' process-link';
+    const show = () => {
+      cell.replaceChildren();
+      const row = document.createElement('div');
+      row.className = 'flex min-w-0 items-center gap-1';
+      if (p.jobUrl) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'process-link-open inline-flex min-w-0 cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-left text-accent hover:underline focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
+        const label = document.createElement('span');
+        label.className = 'truncate';
+        label.textContent = hostOf(p.jobUrl);
+        const arrow = document.createElement('span');
+        arrow.className = 'flex-none text-[11px]';
+        arrow.textContent = '↗';
+        open.append(label, arrow);
+        open.title = `Open ${p.jobUrl}`;
+        open.setAttribute('aria-label', `Open the job posting for ${p.companyName}`);
+        open.addEventListener('click', async () => {
+          try {
+            const res = await window.api.openProcessJobLink(p.jobUrl);
+            if (res && res.error) toast(`Could not open the link: ${res.error}`, { kind: 'error' });
+          } catch (err) { toast(`Could not open the link: ${err.message || err}`, { kind: 'error' }); }
+        });
+        row.append(open, makeActionBtn('✎', 'Change the job link', edit));
+      } else {
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'process-link-add cursor-pointer rounded-full border border-dashed border-line-strong bg-transparent px-2.5 py-1 text-xs text-muted transition-colors duration-150 hover:border-accent hover:text-accent';
+        add.textContent = '+ Add link';
+        add.title = 'Save the job posting link for this application';
+        add.addEventListener('click', edit);
+        row.append(add);
+      }
+      cell.append(row);
+    };
+    // Edits in place: Enter or leaving the box saves, Escape cancels, an empty box removes it.
+    function edit() {
+      const input = document.createElement('input');
+      input.type = 'url';
+      input.className = 'process-link-input w-full rounded-lg border border-line bg-elev px-2 py-1 text-[13px] text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent-ring';
+      input.placeholder = 'https://…';
+      input.value = p.jobUrl || '';
+      input.setAttribute('aria-label', `Job link for ${p.companyName}`);
+      let done = false;
+      const finish = async (save) => {
+        if (done) return;
+        done = true;
+        const value = input.value.trim();
+        if (!save || value === (p.jobUrl || '')) { show(); return; }
+        try {
+          const res = await window.api.setProcessJobLink(currentProfile.saveFolder, p.relativePath, value);
+          if (res && res.error) { toast(res.error, { kind: 'error' }); show(); return; }
+          p.jobUrl = res.jobUrl || '';
+          toast(p.jobUrl ? 'Job link saved' : 'Job link removed');
+        } catch (err) { toast(`Could not save the link: ${err.message || err}`, { kind: 'error' }); }
+        show();
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      });
+      input.addEventListener('blur', () => finish(true));
+      cell.replaceChildren(input);
+      input.focus();
+      input.select();
+    }
+    show();
     return cell;
   }
 
@@ -776,6 +894,9 @@
   function bind() {
     if (bound) return;
     bound = true;
+
+    $('process-tab-table')?.addEventListener('click', () => showTab('table'));
+    $('process-tab-insights')?.addEventListener('click', () => showTab('insights'));
 
     document.querySelectorAll('[data-process-close]').forEach((el) => {
       el.addEventListener('click', close);

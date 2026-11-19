@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('api', {
   deleteProcesses: (profileId) =>
     ipcRenderer.invoke('process:delete', profileId),
   readJdFile: (filePath) => ipcRenderer.invoke('process:readJd', filePath),
+  setProcessJobLink: (saveFolder, relativePath, url) =>
+    ipcRenderer.invoke('process:setJobLink', saveFolder, relativePath, url),
+  openProcessJobLink: (url) => ipcRenderer.invoke('process:openJobLink', url),
   readResumeFile: (filePath) =>
     ipcRenderer.invoke('process:readResume', filePath),
   openFolder: (folderPath) =>

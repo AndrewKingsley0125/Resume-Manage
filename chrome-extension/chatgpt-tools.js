@@ -268,7 +268,7 @@
     const failed = chatError();
     if (failed) throw new Error(`ChatGPT showed an error instead of a reply: ${failed.message}`);
     const response = candidateResponse();
-    await pause(750);
+    await pause(350);
     if (generating() || candidateResponse() !== response) throw new Error('Response is still changing. Wait and read again.');
     return {response,url:location.href};
   }
@@ -336,7 +336,9 @@
   }
   let responseWatch=null;
   // How long the reply must stay unchanged, after ChatGPT stops generating, before it is read.
-  const QUIET_MS=1200;
+  const QUIET_MS=700;
+  // While a reply is awaited, the extension's worker (never slowed) asks for a check this often.
+  const POLL_MS=1000;
   function checkResponse() {
     if(responseWatch)responseWatch.check();
     return {watching:!!responseWatch};
@@ -360,6 +362,9 @@
     }
     async function check() {
       if(responseWatch!==watch || watch.notifying)return;
+      // Keep the worker's checks coming until the reply is collected: in a background tab this
+      // page's own timer can fire as rarely as once a minute.
+      later(POLL_MS);
       const snapshot=responseSnapshot();
       if(snapshot.signature!==watch.signature){watch.signature=snapshot.signature;watch.changedAt=Date.now();}
       if(generating())return;
@@ -385,8 +390,10 @@
       }catch(_){}finally{if(responseWatch===watch)watch.notifying=false;}
     }
     watch.check=check;
-    watch.observer=new MutationObserver(()=>{check();});watch.observer.observe(document.body,{childList:true,subtree:true,characterData:true});
+    // Attributes too: the Stop button turning back into Send is often only an attribute change.
+    watch.observer=new MutationObserver(()=>{check();});watch.observer.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['data-testid','aria-label','disabled','data-state']});
     watch.interval=setInterval(check,1500);
+    later(POLL_MS);
     watch.timeout=setTimeout(()=>{if(responseWatch===watch){chrome.runtime.sendMessage({event:'chat-response-timeout',id,kind,marker:receipt.marker}).catch(()=>{});stopResponseWatch();}},20*60*1000);
     responseWatch=watch;return {watching:true};
   }

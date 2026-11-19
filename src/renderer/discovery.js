@@ -1,6 +1,9 @@
 /* Job Discovery screen: collect jobs, edit each profile's search, review matches,
    and send a chosen job to the Chrome extension through the existing hand-off. */
 (function () {
+  // Questions use the app's themed dialog (confirm-dialog.js), or the plain box without it.
+  const ask = options => window.App && window.App.Confirm ? window.App.Confirm.ask(options)
+    : Promise.resolve(typeof confirm === 'function' ? confirm([options.title, options.subject, options.message].filter(Boolean).join('\n\n')) : true);
   const $ = id => document.getElementById(id);
   let initialized = false, active = false, profileId = null, unsubscribe = null, statusTimer = null, matchToken = 0;
   const VERIFY_TEXT = {VERIFIED_ORIGINAL: 'Verified posting', UNVERIFIED: 'Not verified yet', UNRESOLVED: 'Original not found', EXPIRED: 'Closed', BLOCKED: 'Site blocked the check'};
@@ -210,10 +213,10 @@
         const result = await window.api.discoveryVerify(job.id);
         verification = result.status;
         if (verification === 'EXPIRED') { status(`Not sent: ${result.reason} The job looks closed.`); sendButton.closest('li').remove(); return; }
-        if (verification !== 'VERIFIED_ORIGINAL' && !confirm(`The posting could not be confirmed (${result.reason}). Send it anyway?`)) { status('Not sent.'); sendButton.disabled = false; return; }
+        if (verification !== 'VERIFIED_ORIGINAL' && !(await ask({title:'Send it anyway?', subject:`${job.title} at ${job.companyName}`, message:`The posting could not be confirmed: ${result.reason}`, confirmLabel:'Send anyway', tone:'danger'}))) { status('Not sent.'); sendButton.disabled = false; return; }
       }
       const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
-      if (!confirm(`Send "${job.title}" at ${job.companyName} to the extension for ${name}?\n\nChrome opens it beside ChatGPT. You still review every answer and submit yourself.`)) { status('Not sent.'); sendButton.disabled = false; return; }
+      if (!(await ask({title:`Send to the extension for ${name}?`, subject:`${job.title} at ${job.companyName}`, message:'Chrome opens it beside ChatGPT. You still review every answer and submit yourself.', confirmLabel:'Send'}))) { status('Not sent.'); sendButton.disabled = false; return; }
       const link = await window.App.Profiles.addJobLink(profile.id, job.sourceUrl);
       let style = {};
       try { style = JSON.parse(localStorage.getItem(`style:${profile.id}:${profile.templateId || 'classic'}`) || '{}'); } catch (_) { /* defaults */ }
